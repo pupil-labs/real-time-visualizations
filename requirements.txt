@@ -1,0 +1,5 @@
+numpy
+scipy
+matplotlib
+pupil-labs-realtime-api
+opencv-python 
