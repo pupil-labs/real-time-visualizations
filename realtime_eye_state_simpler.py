@@ -320,12 +320,17 @@ inset_ax_eye_image = inset_axes(
 )
 inset_ax_eye_image.axis("off")
 eye_image_display = inset_ax_eye_image.imshow(
-    np.zeros((192, int((192 * 2) * 1.2), 3), dtype=np.uint8)
+    np.zeros((192, int(192 * 2), 3), dtype=np.uint8)
 )  # placeholder
 
 
 inset_ax_optaxes_xz = inset_axes(
-    eyestate_ax, width="25%", height="22%", loc="lower left"
+    eyestate_ax,
+    width="25%",
+    height="22%",
+    loc="lower left",
+    bbox_to_anchor=(0.17, 0, 1, 1),
+    bbox_transform=eyestate_ax.transAxes,
 )
 inset_ax_optaxes_xz.set_facecolor("black")
 inset_ax_optaxes_xz.set_xlim(-55, 55)
@@ -371,7 +376,12 @@ plot_axes_right_xz = inset_ax_optaxes_xz.quiver(
 
 # inset_ax_optaxes_zy = fig.add_axes([0.78 - 0.3, 0.1 / 2.75, 0.24, 0.2095])
 inset_ax_optaxes_zy = inset_axes(
-    eyestate_ax, width="25%", height="22%", loc="lower right"
+    eyestate_ax,
+    width="25%",
+    height="22%",
+    loc="lower right",
+    bbox_to_anchor=(-0.15, 0, 1, 1),
+    bbox_transform=eyestate_ax.transAxes,
 )
 inset_ax_optaxes_zy.set_facecolor("black")
 inset_ax_optaxes_zy.set_xlim(25, 100)

@@ -17,7 +17,7 @@ device = Device(address="192.168.1.57", port=8080)
 
 # Setup plot
 fig, (ax_eye_image, ax_blinks, ax_pupil_diameter) = plt.subplots(
-    3, 1, figsize=(8, 8), gridspec_kw={"height_ratios": [2, 1, 1]}
+    3, 1, figsize=(8, 8), gridspec_kw={"height_ratios": [1, 1, 1]}
 )
 fig.canvas.manager.set_window_title("3D Eye State Visualization")
 fig.patch.set_facecolor("black")
@@ -25,12 +25,12 @@ fig.patch.set_facecolor("black")
 # Eye image subplot
 ax_eye_image.axis("off")
 eye_image_display = ax_eye_image.imshow(
-    np.zeros((192, int((192 * 2) * 1.2), 3), dtype=np.uint8)
+    np.zeros((192, int(192 * 2), 3), dtype=np.uint8)
 )  # placeholder
 
 # Blinks subplot
 ax_blinks.set_facecolor("black")
-ax_blinks.set_xlim(0, 100)
+ax_blinks.set_xlim(0, 200)
 ax_blinks.set_ylim(0, 1.3)
 ax_blinks.set_xticklabels([])
 ax_blinks.set_yticklabels([])
@@ -44,7 +44,7 @@ ax_blinks.text(
     transform=ax_blinks.transAxes,
     va="top",
 )
-ax_blinks.tick_params(colors="white")
+ax_blinks.tick_params(colors="black")
 for spine in ax_blinks.spines.values():
     spine.set_edgecolor("white")
 
@@ -53,7 +53,7 @@ plot_blinks.set_color((99 / 255, 108 / 255, 191 / 255))
 
 # Pupil diameter subplot
 ax_pupil_diameter.set_facecolor("black")
-ax_pupil_diameter.set_xlim(0, 100)
+ax_pupil_diameter.set_xlim(0, 200)
 ax_pupil_diameter.set_ylim(0, 8.0)
 ax_pupil_diameter.set_xticklabels([])
 ax_pupil_diameter.set_yticklabels([])
@@ -67,7 +67,7 @@ ax_pupil_diameter.text(
     transform=ax_pupil_diameter.transAxes,
     va="top",
 )
-ax_pupil_diameter.tick_params(colors="white")
+ax_pupil_diameter.tick_params(colors="black")
 for spine in ax_pupil_diameter.spines.values():
     spine.set_edgecolor("white")
 
@@ -87,7 +87,7 @@ def data_acquisition_loop():
         gaze = device.receive_gaze_datum(timeout_seconds=0.01)
         eye_event = device.receive_eye_events(timeout_seconds=0.01)
 
-        if gaze is not None and eye_image is not None and eye_event is not None:
+        if gaze is not None and eye_image is not None:
             eye_image = eye_image.bgr_pixels
 
             eye_image = cv2.resize(
@@ -127,6 +127,7 @@ def update(frame_number):
 
     frame = None
     eye_event = None
+    gaze = None
     if not data_queue.empty():
         data = data_queue.get()
         frame = data["eye"]
@@ -147,14 +148,14 @@ def update(frame_number):
 
     if blinked:
         y = 0.8
-        if time.time_ns() - blink_time > (0.1 * 1e9):
+        if time.time_ns() - blink_time > (0.05 * 1e9):
             blinked = False
     else:
         y = 0.0
 
     blink_data.append(y)
-    if len(blink_data) > 100:
-        blink_data = blink_data[-100:]
+    if len(blink_data) > 200:
+        blink_data = blink_data[-200:]
 
     x_vals = np.arange(len(blink_data))
     plot_blinks.set_data(x_vals, blink_data)
@@ -166,15 +167,15 @@ def update(frame_number):
         pupil_diameter_right = gaze.pupil_diameter_right
 
         left_pupil_data.append(pupil_diameter_left)
-        if len(left_pupil_data) > 100:
-            left_pupil_data = left_pupil_data[-100:]
+        if len(left_pupil_data) > 200:
+            left_pupil_data = left_pupil_data[-200:]
 
         x_vals = np.arange(len(left_pupil_data))
         plot_left_pupil.set_data(x_vals, left_pupil_data)
 
         right_pupil_data.append(pupil_diameter_right)
-        if len(right_pupil_data) > 100:
-            right_pupil_data = right_pupil_data[-100:]
+        if len(right_pupil_data) > 200:
+            right_pupil_data = right_pupil_data[-200:]
 
         x_vals = np.arange(len(right_pupil_data))
         plot_right_pupil.set_data(x_vals, right_pupil_data)

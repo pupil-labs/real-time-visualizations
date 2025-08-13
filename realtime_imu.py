@@ -48,11 +48,11 @@ def load_obj(filename):
 
 original_vertices, faces = load_obj("imu.obj")
 
-fig = plt.figure()
+fig = plt.figure(figsize=(6, 6))
 fig.canvas.manager.set_window_title("3D Eye State Visualization")
 fig.patch.set_facecolor("black")
 
-ax = fig.add_subplot(131, projection="3d")
+ax = fig.add_subplot(111, projection="3d")
 ax.axis("square")
 ax.set_aspect("equal", adjustable="box")
 ax.set_box_aspect([1, 1, 1])
