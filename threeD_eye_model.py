@@ -85,7 +85,7 @@ class EyeBall:
 
         self._base_eye_sphere = self._generate_coordinates()
 
-    def _generate_coordinates(self, resolution=20):
+    def _generate_coordinates(self, resolution=13):
         """
         Generate the base coordinates for the eye sphere mesh.
 
@@ -217,12 +217,12 @@ class Pupil:
 
         self._base_pupil_disk = self._generate_coordinates()
 
-    def _generate_coordinates(self, resolution=15):
+    def _generate_coordinates(self, resolution=10):
         """
         Generate the coordinates for a flat disk representing the pupil.
 
         Args:
-            resolution (int, optional): Number of points for the disk mesh. Default is 15.
+            resolution (int, optional): Number of points for the disk mesh. Default is 10.
 
         Returns:
             tuple: Meshgrid arrays (X, Y, Z) representing the pupil disk.
@@ -326,10 +326,10 @@ class EyeLid:
         """
 
         # Tube along circular arc
-        theta = np.linspace(np.pi / 8, np.pi - np.pi / 8, 25)  # curve angle
+        theta = np.linspace(np.pi / 8, np.pi - np.pi / 8, 10)  # curve angle
         R = self.eyeball_radius + 1.5  # major radius (curve path)
         r = 0.45  # tube radius (thickness)
-        n_circle = 8  # resolution of circular cross-section
+        n_circle = 5  # resolution of circular cross-section
 
         # Cross-section circle angles
         phi = np.linspace(0, 2 * np.pi, n_circle)

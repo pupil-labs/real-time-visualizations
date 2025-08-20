@@ -26,7 +26,7 @@ try:
 
     # A Queue is used to pass the data from the acquistion
     # thread to the visualization loop.
-    data_queue = Queue(maxsize=100)
+    data_queue = Queue(maxsize=2)
 
     # This function runs in a separate thread and continuously collects data
     # from the device.
@@ -35,13 +35,19 @@ try:
             try:
                 # See our Python API Documentation for more info about these two functions:
                 # https://pupil-labs.github.io/pl-realtime-api/dev/
-                eye_image = device.receive_eyes_video_frame()
-                gaze = device.receive_gaze_datum()
+                eye_image = device.receive_eyes_video_frame(timeout_seconds=0.01)
+                gaze = device.receive_gaze_datum(timeout_seconds=0.01)
+                scene_image = device.receive_scene_video_frame()
 
                 # Let's only pass data to the visualization when all relevant streams have
                 # provided a datum. This makes the visualization logic simpler.
-                if eye_image is not None and gaze is not None:
+                if (
+                    eye_image is not None
+                    and gaze is not None
+                    and scene_image is not None
+                ):
                     eye_image = eye_image.bgr_pixels
+                    scene_image = scene_image.bgr_pixels
 
                     # Clear out the queue if it's already full.
                     # while not data_queue.empty():
@@ -49,16 +55,10 @@ try:
                     # data_queue.get()
 
                     data_queue.put(
-                        {
-                            "eye": eye_image,
-                            "gaze": gaze,
-                        }
+                        {"eye": eye_image, "gaze": gaze, "scene": scene_image}
                     )
                     data_queue.put(
-                        {
-                            "eye": eye_image,
-                            "gaze": gaze,
-                        }
+                        {"eye": eye_image, "gaze": gaze, "scene": scene_image}
                     )
             except queue.Full:
                 pass
@@ -74,7 +74,7 @@ try:
     # to improve efficiency a bit.
     # Similar to before, we will send the scene camera images to the visualization routine
     # via a queue.
-    scene_queue = Queue(maxsize=20)
+    scene_queue = Queue(maxsize=1)
 
     # This function runs in a separate thread and continuously collects scene camera images
     # from the device.
@@ -99,10 +99,10 @@ try:
                 pass
 
     # Start the scene image acquisition thread. It will now run in the background.
-    scene_acquisition_thread = threading.Thread(
-        target=scene_acquisition_loop, daemon=True
-    )
-    scene_acquisition_thread.start()
+    # scene_acquisition_thread = threading.Thread(
+    # target=scene_acquisition_loop, daemon=True
+    # )
+    # scene_acquisition_thread.start()
 
     # We need a separate ThreeDEyeModel instance for each eye.
     eye_left = ThreeDEyeModel()
@@ -420,7 +420,7 @@ try:
             + [optaxes_right_zy_plot]
         )
 
-    ani2 = animation.FuncAnimation(fig2, update2, interval=33, blit=True)
+    ani2 = animation.FuncAnimation(fig2, update2, interval=35, blit=True)
 
     plt.tight_layout()
 
@@ -462,9 +462,10 @@ try:
             data = data_queue.get()
             eye_img = data["eye"]
             gaze = data["gaze"]
+            scene_img = data["scene"]
 
-        if not scene_queue.empty():
-            scene_img = scene_queue.get()
+        # if not scene_queue.empty():
+        # scene_img = scene_queue.get()
 
         # If there is a scene image and gaze data available, then draw a circle
         # at the gaze point and display the resulting image via OpenCV's imshow function.
@@ -645,7 +646,7 @@ try:
     # Create a matplotlib animation function that will run the `update` function
     # every 33ms. This will update our animation at ~30 FPS. We pass `blit=False`,
     # because matplotlib's 3D functionality does not support blitting.
-    ani1 = animation.FuncAnimation(fig1, update1, interval=33, blit=False)
+    ani1 = animation.FuncAnimation(fig1, update1, interval=35, blit=False)
 
     # This helps to make use of the full figure plotting real-estate.
     plt.tight_layout()
