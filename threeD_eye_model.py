@@ -495,6 +495,7 @@ class ThreeDEyeModel:
             eyelid_bottom_angle (float): The new angle for the bottom eyelid.
         """
 
+        # Match matplotlib conventions.
         self.eyeball_center = np.array(
             [
                 eyeball_center[0],
@@ -502,10 +503,6 @@ class ThreeDEyeModel:
                 -1 * eyeball_center[1],
             ]
         )
-
-        # Match matplotlib conventions.
-        # self.eyeball_center[1] *= -1
-        # self.eyeball_center[2] *= -1
 
         # Match matplotlib conventions.
         self.optical_axis_vector = np.array(

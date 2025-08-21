@@ -1,5 +1,5 @@
 import threading
-from queue import Queue
+from queue import Empty, Queue
 
 import cv2
 import matplotlib.animation as animation
@@ -10,6 +10,11 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from pupil_labs.realtime_api.simple import Device
 
 from threeD_eye_model import ThreeDEyeModel
+
+# --- Configuration Constants ---
+DEVICE_ADDRESS = "192.168.1.34"
+DEVICE_PORT = 8080
+ANIMATION_FRAME_RATE = 30  # FPS
 
 # We will use a background thread to collect data
 # via Neon's Real-time API. This helps to offload the data
@@ -29,21 +34,20 @@ def data_acquisition_loop():
 
         # Let's only pass data to the visualization when all relevant streams have
         # provided a datum. This makes the visualization logic simpler.
-        if eye_image is not None and gaze is not None and scene_image is not None:
-            eye_image = eye_image.bgr_pixels
-            scene_image = scene_image.bgr_pixels
+        if not all((scene_image, eye_image, gaze)):
+            continue
 
-            # Clear out the queue if it's already full.
-            if data_queue.full():
-                data_queue.get_nowait()
+        # Clear out the queue if it's already full.
+        if data_queue.full():
+            data_queue.get_nowait()
 
-            data_queue.put_nowait(
-                {
-                    "eye": eye_image,
-                    "gaze": gaze,
-                    "scene": scene_image,
-                }
-            )
+        data_queue.put_nowait(
+            {
+                "eye": eye_image.bgr_pixels,
+                "gaze": gaze,
+                "scene": scene_image.bgr_pixels,
+            }
+        )
 
 
 # Now, we make class to hold all the elements of the matplotlib figure.
@@ -61,17 +65,19 @@ class ThreeDVisualization:
 
     def __init__(self):
         self.fig = plt.figure(figsize=(6, 6))
-
         self.fig.canvas.manager.set_window_title("3D Eye State Visualization")
         self.fig.patch.set_facecolor("black")
 
+        self._setup_main_3d_axis()
+        self._setup_insets()
+
+    def _setup_main_3d_axis(self):
         # These are the main axes in the figure that hold the 3D plots of the eye model,
         # as well as the insets that we will be adding.
         self.eyestate_ax = self.fig.add_subplot(111, projection="3d")
         self.eyestate_ax.set_xlim([-40, 40])
         self.eyestate_ax.set_ylim([50, 38])
         self.eyestate_ax.set_zlim([-40, 60])
-        # self.eyestate_ax.set_zlim([50, 38])
 
         # Makes sure that 3D plots have equal aspect ratio on all sides.
         # Adapted from:
@@ -94,6 +100,7 @@ class ThreeDVisualization:
         self.eyestate_ax.set_facecolor("black")
         self.eyestate_ax.view_init(elev=12, azim=90)
 
+    def _setup_insets(self):
         # This inset will display the current eye image.
         inset_ax_eye_image = inset_axes(
             self.eyestate_ax, width="100%", height="28%", loc="upper left"
@@ -106,105 +113,68 @@ class ThreeDVisualization:
             np.zeros((192, int(192 * 2), 3), dtype=np.uint8)
         )  # placeholder
 
-        # This inset will display the optical axes of the left and right eye from an overhead view.
-        # In other words, it will display the X and Z coordinates of the optical axes.
-        self.inset_ax_optaxes_xz = inset_axes(
+        self.optaxes_left_xz_arrow, self.optaxes_right_xz_arrow = (
+            self._create_inset_plot(
+                loc="lower left",
+                bbox_to_anchor=(0.17, 0, 1, 1),
+                xlim=(-55, 55),
+                ylim=(-70, 100),
+                title="Optical Axes (X,Z)",
+            )
+        )
+        self.optaxes_left_zy_arrow, self.optaxes_right_zy_arrow = (
+            self._create_inset_plot(
+                loc="lower right",
+                bbox_to_anchor=(-0.15, 0, 1, 1),
+                xlim=(-60, 30),
+                ylim=(-10, 35),
+                title="Optical Axes (Z,Y)",
+            )
+        )
+
+    def _create_inset_plot(self, loc, bbox_to_anchor, xlim, ylim, title):
+        """Helper factory to create and configure an inset axis with two arrows."""
+        ax = inset_axes(
             self.eyestate_ax,
             width="25%",
             height="22%",
-            loc="lower left",
-            bbox_to_anchor=(0.17, 0, 1, 1),
+            loc=loc,
+            bbox_to_anchor=bbox_to_anchor,
             bbox_transform=self.eyestate_ax.transAxes,
         )
-        self.inset_ax_optaxes_xz.set_facecolor("black")
-        self.inset_ax_optaxes_xz.set_xlim(-55, 55)
-        self.inset_ax_optaxes_xz.set_ylim(-70, 100)
-        self.inset_ax_optaxes_xz.set(xticklabels=[], yticklabels=[])
-        self.inset_ax_optaxes_xz.grid(False)
-        self.inset_ax_optaxes_xz.text(
+        ax.set_facecolor("black")
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+        ax.set(xticklabels=[], yticklabels=[])
+        ax.grid(False)
+        ax.text(
             0.05,
             0.15,
-            "Optical Axes (X,Z)",
+            title,
             color="white",
             fontsize=10,
-            transform=self.inset_ax_optaxes_xz.transAxes,
+            transform=ax.transAxes,
             va="top",
         )
-        self.inset_ax_optaxes_xz.tick_params(colors="black")
-        for spine in self.inset_ax_optaxes_xz.spines.values():
+        ax.tick_params(colors="black")
+        for spine in ax.spines.values():
             spine.set_edgecolor("white")
 
-        self.optaxes_left_xz_plot = FancyArrowPatch(
-            (2, -4),
-            (2, -4),
-            color=ThreeDVisualization.GREEN,
-            arrowstyle="->",
-            mutation_scale=15,
-            lw=2,
-        )
-        self.inset_ax_optaxes_xz.add_patch(self.optaxes_left_xz_plot)
-        self.optaxes_right_xz_plot = FancyArrowPatch(
-            (2, -4),
-            (2, -4),
-            color=ThreeDVisualization.RED,
-            arrowstyle="->",
-            mutation_scale=15,
-            lw=2,
-        )
-        self.inset_ax_optaxes_xz.add_patch(self.optaxes_right_xz_plot)
+        arrow_params = {"arrowstyle": "->", "mutation_scale": 15, "lw": 2}
+        left_arrow = FancyArrowPatch((0, 0), (0, 0), color=self.GREEN, **arrow_params)
+        right_arrow = FancyArrowPatch((0, 0), (0, 0), color=self.RED, **arrow_params)
+        ax.add_patch(left_arrow)
+        ax.add_patch(right_arrow)
 
-        # This inset will display the optical axes of the left and right eye from a side-profile view.
-        # In other words, it will display the Z and Y coordinates of the optical axes.
-        self.inset_ax_optaxes_zy = inset_axes(
-            self.eyestate_ax,
-            width="25%",
-            height="22%",
-            loc="lower right",
-            bbox_to_anchor=(-0.15, 0, 1, 1),
-            bbox_transform=self.eyestate_ax.transAxes,
-        )
-        self.inset_ax_optaxes_zy.set_facecolor("black")
-        self.inset_ax_optaxes_zy.set_xlim(-60, 30)
-        self.inset_ax_optaxes_zy.set_ylim(-10, 35)
-        self.inset_ax_optaxes_zy.set(xticklabels=[], yticklabels=[])
-        self.inset_ax_optaxes_zy.grid(False)
-        self.inset_ax_optaxes_zy.text(
-            0.05,
-            0.15,
-            "Optical Axes (Z,Y)",
-            color="white",
-            fontsize=10,
-            transform=self.inset_ax_optaxes_zy.transAxes,
-            va="top",
-        )
-        self.inset_ax_optaxes_zy.tick_params(colors="black")
-        for spine in self.inset_ax_optaxes_zy.spines.values():
-            spine.set_edgecolor("white")
-
-        self.optaxes_left_zy_plot = FancyArrowPatch(
-            (2, -4),
-            (2, -4),
-            color=ThreeDVisualization.GREEN,
-            arrowstyle="->",
-            mutation_scale=15,
-            lw=2,
-        )
-        self.inset_ax_optaxes_zy.add_patch(self.optaxes_left_zy_plot)
-        self.optaxes_right_zy_plot = FancyArrowPatch(
-            (2, -4),
-            (2, -4),
-            color=ThreeDVisualization.RED,
-            arrowstyle="->",
-            mutation_scale=15,
-            lw=2,
-        )
-        self.inset_ax_optaxes_zy.add_patch(self.optaxes_right_zy_plot)
+        return left_arrow, right_arrow
 
 
 if __name__ == "__main__":
     # First, establish a connection to Neon.
-    device = Device(address="192.168.1.34", port=8080)
+    print(f"Connecting to device at {DEVICE_ADDRESS}:{DEVICE_PORT}...")
     # device = discover_one_device()
+    device = Device(address="192.168.1.34", port=8080)
+    print("Connection successful.")
 
     # Start up the data acquisition threads.
     data_acquisition_thread = threading.Thread(
@@ -235,17 +205,20 @@ if __name__ == "__main__":
         # also check if the user pressed Esc, which will quit the visualization.
         key = cv2.waitKey(1) & 0xFF
         if key == 27:
+            plt.close(threeD_viz.fig)
             cv2.destroyAllWindows()
             return
 
         eye_img = None
         gaze = None
         scene_img = None
-        if not data_queue.empty():
+        try:
             data = data_queue.get_nowait()
             eye_img = data["eye"]
             gaze = data["gaze"]
             scene_img = data["scene"]
+        except Empty:
+            pass
 
         # If there is a scene image and gaze data available, then draw a circle
         # at the gaze point and display the resulting image via OpenCV's imshow function.
@@ -337,7 +310,7 @@ if __name__ == "__main__":
                 eye_center_left[0] + optaxis_left_xz[0],
                 eye_center_left[2] + optaxis_left_xz[1],
             )
-            threeD_viz.optaxes_left_xz_plot.set_positions(start, end)
+            threeD_viz.optaxes_left_xz_arrow.set_positions(start, end)
 
             optaxis_right_xz = np.array(
                 [optical_axis_vector_right[0], optical_axis_vector_right[2]]
@@ -349,7 +322,7 @@ if __name__ == "__main__":
                 eye_center_right[0] + optaxis_right_xz[0],
                 eye_center_right[2] + optaxis_right_xz[1],
             )
-            threeD_viz.optaxes_right_xz_plot.set_positions(start, end)
+            threeD_viz.optaxes_right_xz_arrow.set_positions(start, end)
 
             # We do similar for the side-profile view of the optical axes.
             optaxis_left_zy = np.array(
@@ -362,7 +335,7 @@ if __name__ == "__main__":
                 eye_center_left[2] + optaxis_left_zy[0],
                 eye_center_left[1] + optaxis_left_zy[1],
             )
-            threeD_viz.optaxes_left_zy_plot.set_positions(start, end)
+            threeD_viz.optaxes_left_zy_arrow.set_positions(start, end)
 
             optaxis_right_zy = np.array(
                 [optical_axis_vector_right[2], optical_axis_vector_right[1]]
@@ -374,7 +347,7 @@ if __name__ == "__main__":
                 eye_center_right[2] + optaxis_right_zy[0],
                 eye_center_right[1] + optaxis_right_zy[1],
             )
-            threeD_viz.optaxes_right_zy_plot.set_positions(start, end)
+            threeD_viz.optaxes_right_zy_arrow.set_positions(start, end)
 
         # Finally, we return a list of plot objects, per
         # matplotlib's conventions.
@@ -383,10 +356,10 @@ if __name__ == "__main__":
             + [eye_left.optical_axis.optical_axis_quiver_plot]
             + [eye_right.optical_axis.optical_axis_quiver_plot]
             + [threeD_viz.eye_image_plot]
-            + [threeD_viz.optaxes_left_xz_plot]
-            + [threeD_viz.optaxes_right_xz_plot]
-            + [threeD_viz.optaxes_left_zy_plot]
-            + [threeD_viz.optaxes_right_zy_plot]
+            + [threeD_viz.optaxes_left_xz_arrow]
+            + [threeD_viz.optaxes_right_xz_arrow]
+            + [threeD_viz.optaxes_left_zy_arrow]
+            + [threeD_viz.optaxes_right_zy_arrow]
         )
 
     # Wrap the actual animation "loop" in a try-except-finally block.
@@ -397,7 +370,10 @@ if __name__ == "__main__":
         # Create a matplotlib animation function that will run the `update` function
         # every 33ms. This will update our animation at ~30 FPS. We pass `blit=False`,
         # because matplotlib's 3D functionality does not support blitting.
-        ani = animation.FuncAnimation(threeD_viz.fig, update, interval=33, blit=False)
+        interval_ms = 1000 / ANIMATION_FRAME_RATE
+        ani = animation.FuncAnimation(
+            threeD_viz.fig, update, interval=interval_ms, blit=False
+        )
 
         plt.tight_layout()
         plt.show()
@@ -408,5 +384,7 @@ if __name__ == "__main__":
     finally:
         # No matter what happens, we need to clean close our connection to Neon
         # and close all OpenCV windows.
+        print("Cleaning up resources...")
         device.close()
         cv2.destroyAllWindows()
+        print("Done.")
