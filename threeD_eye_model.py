@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-# We recommend reviewing the relevant datastreams in Neon's Documentation, if necessary,
+# We recommend reviewing the relevant datastreams in Neon's online Documentation, if necessary,
 # before working your way through this code:
 # https://docs.pupil-labs.com/neon/data-collection/data-streams/
 
@@ -90,7 +90,7 @@ class EyeBall:
         Generate the base coordinates for the eye sphere mesh.
 
         Args:
-            resolution (int, optional): Sampling resolution of the sphere mesh. Default is 20.
+            resolution (int, optional): Sampling resolution of the sphere mesh. Default is 13.
 
         Returns:
             tuple: Meshgrid arrays (x, y, z) representing the sphere surface.
@@ -268,6 +268,8 @@ class Pupil:
         pts = np.stack([X_s.ravel(), Y_s.ravel(), Z_s.ravel()], axis=1)
 
         # The pupil sits on the surface of the eye sphere (local coordinates).
+        # In the process, also shift it forward by an additional 2 units to
+        # avoid a matplotlib rendering artifact.
         pts += [0.0, self.eyeball_radius + 2.0, 0.0]
 
         # Rotate the pupil into position, according to the optical axis rotation.
@@ -493,11 +495,17 @@ class ThreeDEyeModel:
             eyelid_bottom_angle (float): The new angle for the bottom eyelid.
         """
 
-        self.eyeball_center = eyeball_center
+        self.eyeball_center = np.array(
+            [
+                eyeball_center[0],
+                eyeball_center[2],
+                -1 * eyeball_center[1],
+            ]
+        )
 
         # Match matplotlib conventions.
-        self.eyeball_center[1] *= -1
-        self.eyeball_center[2] *= -1
+        # self.eyeball_center[1] *= -1
+        # self.eyeball_center[2] *= -1
 
         # Match matplotlib conventions.
         self.optical_axis_vector = np.array(

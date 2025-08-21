@@ -1,4 +1,3 @@
-import queue
 import threading
 from queue import Queue
 
@@ -6,423 +5,218 @@ import cv2
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.patches import FancyArrowPatch
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from pupil_labs.realtime_api.simple import Device
 
 from threeD_eye_model import ThreeDEyeModel
 
-# Wrap everything in a big try-except-finally block.
-# This is done because if anything goes wrong or the
-# user quits the program, then we need to cleanly close our
-# connection to Neon and clean up any OpenCV windows.
-try:
+# We will use a background thread to collect data
+# via Neon's Real-time API. This helps to offload the data
+# acquisition from the main thread, allowing for smoother
+# visualization updates.
+
+data_queue = Queue(maxsize=1)
+
+
+def data_acquisition_loop():
+    while True:
+        # See our Python API Documentation for more info about these two functions:
+        # https://pupil-labs.github.io/pl-realtime-api/dev/
+        scene_image = device.receive_scene_video_frame(timeout_seconds=0.03)
+        eye_image = device.receive_eyes_video_frame(timeout_seconds=0.01)
+        gaze = device.receive_gaze_datum(timeout_seconds=0.01)
+
+        # Let's only pass data to the visualization when all relevant streams have
+        # provided a datum. This makes the visualization logic simpler.
+        if eye_image is not None and gaze is not None and scene_image is not None:
+            eye_image = eye_image.bgr_pixels
+            scene_image = scene_image.bgr_pixels
+
+            # Clear out the queue if it's already full.
+            if data_queue.full():
+                data_queue.get_nowait()
+
+            data_queue.put_nowait(
+                {
+                    "eye": eye_image,
+                    "gaze": gaze,
+                    "scene": scene_image,
+                }
+            )
+
+
+# Now, we make class to hold all the elements of the matplotlib figure.
+# This makes it easier to organize the visualization logic later.
+# The figure will have three sections:
+# - A space at the top to display the current eye image.
+# - A space in the middle to display the animated 3D eye model.
+# - A space at the bottom for plots that will show the optical axis vectors, for quick inspection
+#   of things, like vergence angle.
+
+
+class ThreeDVisualization:
+    GREEN = (101 / 255, 188 / 255, 118 / 255)
+    RED = (229 / 255, 111 / 255, 114 / 255)
+
+    def __init__(self):
+        self.fig = plt.figure(figsize=(6, 6))
+
+        self.fig.canvas.manager.set_window_title("3D Eye State Visualization")
+        self.fig.patch.set_facecolor("black")
+
+        # These are the main axes in the figure that hold the 3D plots of the eye model,
+        # as well as the insets that we will be adding.
+        self.eyestate_ax = self.fig.add_subplot(111, projection="3d")
+        self.eyestate_ax.set_xlim([-40, 40])
+        self.eyestate_ax.set_ylim([50, 38])
+        self.eyestate_ax.set_zlim([-40, 60])
+        # self.eyestate_ax.set_zlim([50, 38])
+
+        # Makes sure that 3D plots have equal aspect ratio on all sides.
+        # Adapted from:
+        # https://github.com/matplotlib/matplotlib/issues/17172#issuecomment-830139107
+        self.eyestate_ax.set_box_aspect(
+            [
+                ub - lb
+                for lb, ub in (
+                    getattr(self.eyestate_ax, f"get_{a}lim")() for a in "xyz"
+                )
+            ]
+        )
+
+        self.eyestate_ax.set_xlabel("X")
+        self.eyestate_ax.set_ylabel("Z")
+        self.eyestate_ax.set_zlabel("Y")
+        self.eyestate_ax.set(xticklabels=[], yticklabels=[], zticklabels=[])
+        self.eyestate_ax.grid(False)
+        self.eyestate_ax.set_axis_off()
+        self.eyestate_ax.set_facecolor("black")
+        self.eyestate_ax.view_init(elev=12, azim=90)
+
+        # This inset will display the current eye image.
+        inset_ax_eye_image = inset_axes(
+            self.eyestate_ax, width="100%", height="28%", loc="upper left"
+        )
+        inset_ax_eye_image.axis("off")
+        # We need to plot something into the insets,
+        # in order to have a plot object that will be updated
+        # in the animation loop
+        self.eye_image_plot = inset_ax_eye_image.imshow(
+            np.zeros((192, int(192 * 2), 3), dtype=np.uint8)
+        )  # placeholder
+
+        # This inset will display the optical axes of the left and right eye from an overhead view.
+        # In other words, it will display the X and Z coordinates of the optical axes.
+        self.inset_ax_optaxes_xz = inset_axes(
+            self.eyestate_ax,
+            width="25%",
+            height="22%",
+            loc="lower left",
+            bbox_to_anchor=(0.17, 0, 1, 1),
+            bbox_transform=self.eyestate_ax.transAxes,
+        )
+        self.inset_ax_optaxes_xz.set_facecolor("black")
+        self.inset_ax_optaxes_xz.set_xlim(-55, 55)
+        self.inset_ax_optaxes_xz.set_ylim(-70, 100)
+        self.inset_ax_optaxes_xz.set(xticklabels=[], yticklabels=[])
+        self.inset_ax_optaxes_xz.grid(False)
+        self.inset_ax_optaxes_xz.text(
+            0.05,
+            0.15,
+            "Optical Axes (X,Z)",
+            color="white",
+            fontsize=10,
+            transform=self.inset_ax_optaxes_xz.transAxes,
+            va="top",
+        )
+        self.inset_ax_optaxes_xz.tick_params(colors="black")
+        for spine in self.inset_ax_optaxes_xz.spines.values():
+            spine.set_edgecolor("white")
+
+        self.optaxes_left_xz_plot = FancyArrowPatch(
+            (2, -4),
+            (2, -4),
+            color=ThreeDVisualization.GREEN,
+            arrowstyle="->",
+            mutation_scale=15,
+            lw=2,
+        )
+        self.inset_ax_optaxes_xz.add_patch(self.optaxes_left_xz_plot)
+        self.optaxes_right_xz_plot = FancyArrowPatch(
+            (2, -4),
+            (2, -4),
+            color=ThreeDVisualization.RED,
+            arrowstyle="->",
+            mutation_scale=15,
+            lw=2,
+        )
+        self.inset_ax_optaxes_xz.add_patch(self.optaxes_right_xz_plot)
+
+        # This inset will display the optical axes of the left and right eye from a side-profile view.
+        # In other words, it will display the Z and Y coordinates of the optical axes.
+        self.inset_ax_optaxes_zy = inset_axes(
+            self.eyestate_ax,
+            width="25%",
+            height="22%",
+            loc="lower right",
+            bbox_to_anchor=(-0.15, 0, 1, 1),
+            bbox_transform=self.eyestate_ax.transAxes,
+        )
+        self.inset_ax_optaxes_zy.set_facecolor("black")
+        self.inset_ax_optaxes_zy.set_xlim(-60, 30)
+        self.inset_ax_optaxes_zy.set_ylim(-10, 35)
+        self.inset_ax_optaxes_zy.set(xticklabels=[], yticklabels=[])
+        self.inset_ax_optaxes_zy.grid(False)
+        self.inset_ax_optaxes_zy.text(
+            0.05,
+            0.15,
+            "Optical Axes (Z,Y)",
+            color="white",
+            fontsize=10,
+            transform=self.inset_ax_optaxes_zy.transAxes,
+            va="top",
+        )
+        self.inset_ax_optaxes_zy.tick_params(colors="black")
+        for spine in self.inset_ax_optaxes_zy.spines.values():
+            spine.set_edgecolor("white")
+
+        self.optaxes_left_zy_plot = FancyArrowPatch(
+            (2, -4),
+            (2, -4),
+            color=ThreeDVisualization.GREEN,
+            arrowstyle="->",
+            mutation_scale=15,
+            lw=2,
+        )
+        self.inset_ax_optaxes_zy.add_patch(self.optaxes_left_zy_plot)
+        self.optaxes_right_zy_plot = FancyArrowPatch(
+            (2, -4),
+            (2, -4),
+            color=ThreeDVisualization.RED,
+            arrowstyle="->",
+            mutation_scale=15,
+            lw=2,
+        )
+        self.inset_ax_optaxes_zy.add_patch(self.optaxes_right_zy_plot)
+
+
+if __name__ == "__main__":
     # First, establish a connection to Neon.
     device = Device(address="192.168.1.34", port=8080)
     # device = discover_one_device()
 
-    # Next, let's prepare a thread that will collect data
-    # via Neon's Real-time API. This helps to offload the data
-    # acquisition from the main thread, allowing for smoother
-    # visualization updates.
-
-    # A Queue is used to pass the data from the acquistion
-    # thread to the visualization loop.
-    data_queue = Queue(maxsize=2)
-
-    # This function runs in a separate thread and continuously collects data
-    # from the device.
-    def data_acquisition_loop():
-        while True:
-            try:
-                # See our Python API Documentation for more info about these two functions:
-                # https://pupil-labs.github.io/pl-realtime-api/dev/
-                eye_image = device.receive_eyes_video_frame(timeout_seconds=0.01)
-                gaze = device.receive_gaze_datum(timeout_seconds=0.01)
-                scene_image = device.receive_scene_video_frame()
-
-                # Let's only pass data to the visualization when all relevant streams have
-                # provided a datum. This makes the visualization logic simpler.
-                if (
-                    eye_image is not None
-                    and gaze is not None
-                    and scene_image is not None
-                ):
-                    eye_image = eye_image.bgr_pixels
-                    scene_image = scene_image.bgr_pixels
-
-                    # Clear out the queue if it's already full.
-                    # while not data_queue.empty():
-                    # data_queue.get()
-                    # data_queue.get()
-
-                    data_queue.put(
-                        {"eye": eye_image, "gaze": gaze, "scene": scene_image}
-                    )
-                    data_queue.put(
-                        {"eye": eye_image, "gaze": gaze, "scene": scene_image}
-                    )
-            except queue.Full:
-                pass
-
-    # Start the data acquisition thread. It will now run in the background.
+    # Start up the data acquisition threads.
     data_acquisition_thread = threading.Thread(
         target=data_acquisition_loop, daemon=True
     )
     data_acquisition_thread.start()
 
-    # For interpreting data, it can also be helpful to see the scene camera feed, with a
-    # gaze overlay in real-time. We will receive scene camera images in a separate thread,
-    # to improve efficiency a bit.
-    # Similar to before, we will send the scene camera images to the visualization routine
-    # via a queue.
-    scene_queue = Queue(maxsize=1)
-
-    # This function runs in a separate thread and continuously collects scene camera images
-    # from the device.
-    def scene_acquisition_loop():
-        while True:
-            try:
-                # See our Python API Documentation for more info about this function:
-                # https://pupil-labs.github.io/pl-realtime-api/dev/
-                scene_image = device.receive_scene_video_frame()
-
-                # Let's only pass scene images to the visualization when an image is available.
-                # This makes the visualization logic simpler.
-                if scene_image is not None:
-                    scene_image = scene_image.bgr_pixels
-
-                    # Clear out the queue if it's already full.
-                    if scene_queue.full():
-                        scene_queue.get()
-
-                    scene_queue.put(scene_image)
-            except queue.Full:
-                pass
-
-    # Start the scene image acquisition thread. It will now run in the background.
-    # scene_acquisition_thread = threading.Thread(
-    # target=scene_acquisition_loop, daemon=True
-    # )
-    # scene_acquisition_thread.start()
-
-    # We need a separate ThreeDEyeModel instance for each eye.
+    # Create a separate ThreeDEyeModel instance for each eye.
     eye_left = ThreeDEyeModel()
     eye_right = ThreeDEyeModel()
 
-    # Now, we can prepare the matplotlib figure.
-    # It will have three sections:
-    # - A space at the top to display the current eye image.
-    # - A space in the middle to display the animated 3D eye model.
-    # - A space at the bottom for plots that will show the optical axis vectors, for quick inspection
-    #   of things, like vergence angle.
-
-    fig1 = plt.figure(figsize=(6, 6))
-
-    # We change settings related to aesthetics.
-    # These have no influence on the actual data, but make it easier to see what is going on.
-    fig1.canvas.manager.set_window_title("3D Eye State Visualization")
-    fig1.patch.set_facecolor("black")
-
-    # These are main axes in the figure that hold the 3D plots of the eye model,
-    # as well as the insets that we will be adding.
-    eyestate_ax = fig1.add_subplot(111, projection="3d")
-    eyestate_ax.set_xlim([-40, 40])
-    eyestate_ax.set_ylim([-40, 60])
-    eyestate_ax.set_zlim([50, 38])
-
-    # Makes sure that 3D plots have equal aspect ratio on all sides.
-    # Adapted from:
-    # https://github.com/matplotlib/matplotlib/issues/17172#issuecomment-830139107
-    eyestate_ax.set_box_aspect(
-        [ub - lb for lb, ub in (getattr(eyestate_ax, f"get_{a}lim")() for a in "xyz")]
-    )
-
-    eyestate_ax.set_xlabel("X")
-    eyestate_ax.set_ylabel("Z")
-    eyestate_ax.set_zlabel("Y")
-    eyestate_ax.set(xticklabels=[], yticklabels=[], zticklabels=[])
-    eyestate_ax.grid(False)
-    eyestate_ax.set_axis_off()
-    eyestate_ax.set_facecolor("black")
-    eyestate_ax.view_init(elev=12, azim=90)
-
-    # This inset will display the current eye image.
-    # inset_ax_eye_image = inset_axes(
-    #     eyestate_ax, width="100%", height="28%", loc="upper left"
-    # )
-    # inset_ax_eye_image.axis("off")
-    # An inset just defines the axes. You then need to plot something into them,
-    # in order to have a plot object that will be updated in the animation loop
-    # later.
-    # eye_image_plot = inset_ax_eye_image.imshow(
-    #     np.zeros((192, int(192 * 2), 3), dtype=np.uint8)
-    # )  # placeholder
-
-    fig2 = plt.figure(figsize=(6, 6))
-    fig2.patch.set_facecolor("black")
-
-    # This inset will display the optical axes of the left and right eye from an overhead view.
-    # In other words, it will display the X and Z coordinates of the optical axes.
-    # inset_ax_optaxes_xz = inset_axes(
-    #     eyestate_ax,
-    #     width="25%",
-    #     height="22%",
-    #     loc="lower left",
-    #     bbox_to_anchor=(0.17, 0, 1, 1),
-    #     bbox_transform=eyestate_ax.transAxes,
-    # )
-    inset_ax_optaxes_xz = fig2.add_subplot(121)
-    inset_ax_optaxes_xz.set_facecolor("black")
-    # inset_ax_optaxes_xz.set_xlim(-55, 55)
-    # inset_ax_optaxes_xz.set_ylim(-10, 180)
-    inset_ax_optaxes_xz.set(xticklabels=[], yticklabels=[])
-    inset_ax_optaxes_xz.set_title("Optical Axes (X,Z)", color="white")
-    inset_ax_optaxes_xz.set_xlabel("X")
-    inset_ax_optaxes_xz.set_ylabel("Z")
-    inset_ax_optaxes_xz.set_aspect("equal")
-    inset_ax_optaxes_xz.set_box_aspect(1)
-    inset_ax_optaxes_xz.grid(False)
-    # inset_ax_optaxes_xz.text(
-    #     0.05,
-    #     0.15,
-    #     "Optical Axes (X,Z)",
-    #     color="white",
-    #     fontsize=10,
-    #     transform=inset_ax_optaxes_xz.transAxes,
-    #     va="top",
-    # )
-    inset_ax_optaxes_xz.tick_params(colors="black")
-    for spine in inset_ax_optaxes_xz.spines.values():
-        spine.set_edgecolor("white")
-
-    # Again, we need to plot something into the insets,
-    # in order to have a plot object that will be updated
-    # in the animation loop
-    optaxes_left_xz_plot = inset_ax_optaxes_xz.quiver(
-        -2,
-        -4,
-        0,
-        0,
-        color=(101 / 255, 188 / 255, 118 / 255),
-        scale=1,
-        scale_units="xy",
-        angles="xy",
-        width=0.01,
-    )
-    optaxes_right_xz_plot = inset_ax_optaxes_xz.quiver(
-        2,
-        -4,
-        0,
-        0,
-        color=(229 / 255, 111 / 255, 114 / 255),
-        scale=1,
-        scale_units="xy",
-        angles="xy",
-        width=0.01,
-    )
-
-    # This inset will display the optical axes of the left and right eye from a side-profile view.
-    # In other words, it will display the Z and Y coordinates of the optical axes.
-    # inset_ax_optaxes_zy = inset_axes(
-    #     eyestate_ax,
-    #     width="25%",
-    #     height="22%",
-    #     loc="lower right",
-    #     bbox_to_anchor=(-0.15, 0, 1, 1),
-    #     bbox_transform=eyestate_ax.transAxes,
-    # )
-    inset_ax_optaxes_zy = fig2.add_subplot(122)
-    inset_ax_optaxes_zy.set_facecolor("black")
-    # inset_ax_optaxes_zy.set_xlim(25, 100)
-    # inset_ax_optaxes_zy.set_ylim(10, -35)
-    inset_ax_optaxes_zy.set(xticklabels=[], yticklabels=[])
-    inset_ax_optaxes_zy.set_title("Optical Axes (Z,Y)", color="white")
-    inset_ax_optaxes_zy.set_xlabel("Z")
-    inset_ax_optaxes_zy.set_ylabel("Y")
-    inset_ax_optaxes_xz.set_aspect("equal")
-    inset_ax_optaxes_xz.set_box_aspect(1)
-    inset_ax_optaxes_zy.grid(False)
-    # inset_ax_optaxes_zy.text(
-    #     0.05,
-    #     0.15,
-    #     "Optical Axes (Z,Y)",
-    #     color="white",
-    #     fontsize=10,
-    #     transform=inset_ax_optaxes_zy.transAxes,
-    #     va="top",
-    # )
-    inset_ax_optaxes_zy.tick_params(colors="black")
-    for spine in inset_ax_optaxes_zy.spines.values():
-        spine.set_edgecolor("white")
-
-    # Again, we need to plot something into the insets,
-    # in order to have a plot object that will be updated
-    # in the animation loop
-    optaxes_left_zy_plot = inset_ax_optaxes_zy.quiver(
-        -2,
-        -4,
-        0,
-        0,
-        color=(101 / 255, 188 / 255, 118 / 255),
-        scale=1,
-        scale_units="xy",
-        angles="xy",
-        width=0.01,
-    )
-    optaxes_right_zy_plot = inset_ax_optaxes_zy.quiver(
-        2,
-        -4,
-        0,
-        0,
-        color=(229 / 255, 111 / 255, 114 / 255),
-        scale=1,
-        scale_units="xy",
-        angles="xy",
-        width=0.01,
-    )
-
-    # Create two OpenCV windows for displaying:
-    # 1. Scene camera feed with gaze overlay
-    # 2. Eye camera feed
-    cv2.namedWindow("Scene Camera + Gaze Overlay - Press ESC to quit")
-    cv2.namedWindow("Eye Cameras - Press ESC to quit")
-
-    def update2(frame_number):
-        # Some matplotlib plotting objects need to be declared as global
-        # to be accessible from the `update` function. A linter, such as Ruff,
-        # can easily point out which ones need to be declared as global.
-        global optaxes_left_xz_plot
-        global optaxes_right_xz_plot
-        global optaxes_left_zy_plot
-        global optaxes_right_zy_plot
-
-        gaze = None
-        if not data_queue.empty():
-            data = data_queue.get()
-            gaze = data["gaze"]
-
-            eye_center_left = np.array(
-                [
-                    gaze.eyeball_center_left_x,
-                    gaze.eyeball_center_left_y,
-                    gaze.eyeball_center_left_z,
-                ]
-            )
-            optical_axis_vector_left = np.array(
-                [
-                    gaze.optical_axis_left_x,
-                    gaze.optical_axis_left_y,
-                    gaze.optical_axis_left_z,
-                ]
-            )
-
-            eye_center_right = np.array(
-                [
-                    gaze.eyeball_center_right_x,
-                    gaze.eyeball_center_right_y,
-                    gaze.eyeball_center_right_z,
-                ]
-            )
-            optical_axis_vector_right = np.array(
-                [
-                    gaze.optical_axis_right_x,
-                    gaze.optical_axis_right_y,
-                    gaze.optical_axis_right_z,
-                ]
-            )
-
-            # Plot an overhead view of the optical axes as arrows, using matplotlib's quiver.
-            # This can be used to qualitatively inspect vergence, for example.
-            optaxis_left_xz = np.array(
-                [optical_axis_vector_left[0], optical_axis_vector_left[2]]
-            )
-
-            # Normalize and rescale the vector to make it easier to see in the
-            # plot.
-            optaxis_left_xz /= np.linalg.norm(optaxis_left_xz)
-            optaxis_left_xz *= 125
-
-            # Again, some matplotlib objects need to be manually removed, before you
-            # draw the next frame. Comment the `remove()` line below to see what happens,
-            # if you don't do this.
-            optaxes_left_xz_plot.remove()
-            optaxes_left_xz_plot = inset_ax_optaxes_xz.quiver(
-                eye_center_left[0],
-                eye_center_left[2],
-                optaxis_left_xz[0],
-                optaxis_left_xz[1],
-                color=(101 / 255, 188 / 255, 118 / 255),
-                scale=1,
-                scale_units="xy",
-                angles="xy",
-                width=0.01,
-            )
-
-            # Plot the right optical axis vector in an overhead view.
-            optaxis_right_xz = np.array(
-                [optical_axis_vector_right[0], optical_axis_vector_right[2]]
-            )
-            optaxis_right_xz /= np.linalg.norm(optaxis_right_xz)
-            optaxis_right_xz *= 125
-            optaxes_right_xz_plot.remove()
-            optaxes_right_xz_plot = inset_ax_optaxes_xz.quiver(
-                eye_center_right[0],
-                eye_center_right[2],
-                optaxis_right_xz[0],
-                optaxis_right_xz[1],
-                color=(229 / 255, 111 / 255, 114 / 255),
-                scale=1,
-                scale_units="xy",
-                angles="xy",
-                width=0.01,
-            )
-
-            # We do similar for the side-profile view of the optical axes.
-            optaxis_left_zy = np.array(
-                [optical_axis_vector_left[2], optical_axis_vector_left[1]]
-            )
-            optaxis_left_zy /= np.linalg.norm(optaxis_left_zy)
-            optaxis_left_zy *= 50
-            optaxes_left_zy_plot.remove()
-            optaxes_left_zy_plot = inset_ax_optaxes_zy.quiver(
-                eye_center_left[2],
-                eye_center_left[1],
-                optaxis_left_zy[0],
-                optaxis_left_zy[1],
-                color=(101 / 255, 188 / 255, 118 / 255),
-                scale=1,
-                scale_units="xy",
-                angles="xy",
-                width=0.01,
-            )
-
-            optaxis_right_zy = np.array(
-                [optical_axis_vector_right[2], optical_axis_vector_right[1]]
-            )
-            optaxis_right_zy /= np.linalg.norm(optaxis_right_zy)
-            optaxis_right_zy *= 50
-            optaxes_right_zy_plot.remove()
-            optaxes_right_zy_plot = inset_ax_optaxes_zy.quiver(
-                eye_center_right[2],
-                eye_center_right[1],
-                optaxis_right_zy[0],
-                optaxis_right_zy[1],
-                color=(229 / 255, 111 / 255, 114 / 255),
-                scale=1,
-                scale_units="xy",
-                angles="xy",
-                width=0.01,
-            )
-
-        return (
-            [optaxes_left_xz_plot]
-            + [optaxes_right_xz_plot]
-            + [optaxes_left_zy_plot]
-            + [optaxes_right_zy_plot]
-        )
-
-    ani2 = animation.FuncAnimation(fig2, update2, interval=35, blit=True)
-
-    plt.tight_layout()
+    threeD_viz = ThreeDVisualization()
 
     # Now, we get to the main animation callback that will be repeatedly called by matplotlib's
     # animation routines for each frame. It essentially:
@@ -430,19 +224,11 @@ try:
     # - Gets the latest data in the data_queue, as provided by the data acquisition thread.
     # - Converts the eyestate data into a format that is more easily used for plotting.
     # - Updates the plot objects with the new data.
-    # - Finally, the function returns, passing the plot objects onto matplotlib's animation routine, so that it can draw
+    # - Finally, the function returns, passing the plot objects to matplotlib's animation routine, so that it can draw
     #   the next frame to the plot.
     #
     # The frame_number argument is required by matplotlib, even if you do not use it in your function.
-    def update1(frame_number):
-        # Some matplotlib plotting objects need to be declared as global
-        # to be accessible from the `update` function. A linter, such as Ruff,
-        # can easily point out which ones need to be declared as global.
-        # global optaxes_left_xz_plot
-        # global optaxes_right_xz_plot
-        # global optaxes_left_zy_plot
-        # global optaxes_right_zy_plot
-
+    def update(frame_number):
         # Without having a brief pause before updating images, the matplotlib animation stutters.
         # It is also required for properly updating OpenCV windows.
         # Here, we use OpenCV's waitKey function to introduce a small 1ms delay and
@@ -452,20 +238,14 @@ try:
             cv2.destroyAllWindows()
             return
 
-        # Prepare variables to hold the latest data
-        # and check if the queues have new values.
-        # If new values are available, get them from the queues.
         eye_img = None
         gaze = None
         scene_img = None
         if not data_queue.empty():
-            data = data_queue.get()
+            data = data_queue.get_nowait()
             eye_img = data["eye"]
             gaze = data["gaze"]
             scene_img = data["scene"]
-
-        # if not scene_queue.empty():
-        # scene_img = scene_queue.get()
 
         # If there is a scene image and gaze data available, then draw a circle
         # at the gaze point and display the resulting image via OpenCV's imshow function.
@@ -483,8 +263,7 @@ try:
         # If there is an eye image available, then draw it to the
         # associated plot.
         if eye_img is not None:
-            cv2.imshow("Eye Cameras - Press ESC to quit", eye_img)
-            # eye_image_plot.set_data(eye_img)
+            threeD_viz.eye_image_plot.set_data(eye_img)
 
         # If there is gaze data available, then update the
         # ThreeDEyeModels and the optical axis plots.
@@ -537,128 +316,97 @@ try:
 
             # We use matplotlib's `plot_surface` to draw the eyeball,
             # and we need to clear them from the plot before drawing the next
-            # frame. Otherwise, you will see many overlapping spheres. Comment
-            # these two lines to see the effect.
-            for artist in list(eyestate_ax.collections):
+            # frame. Comment these two lines to see the effect.
+            for artist in list(threeD_viz.eyestate_ax.collections):
                 artist.remove()
 
-            # Use the ThreeDEyeModel's plot function to draw the full eyestate
-            # in 3D!
-            eye_left.plot(eyestate_ax, (101 / 255, 188 / 255, 118 / 255))
-            eye_right.plot(eyestate_ax, (229 / 255, 111 / 255, 114 / 255))
+            # Plot the measured eyestate in 3D!
+            eye_left.plot(threeD_viz.eyestate_ax, threeD_viz.GREEN)
+            eye_right.plot(threeD_viz.eyestate_ax, threeD_viz.RED)
 
-            # # Plot an overhead view of the optical axes as arrows, using matplotlib's quiver.
-            # # This can be used to qualitatively inspect vergence, for example.
-            # optaxis_left_xz = np.array(
-            #     [optical_axis_vector_left[0], optical_axis_vector_left[2]]
-            # )
+            # Plot the optical axes from an overhead view.
+            optaxis_left_xz = np.array(
+                [optical_axis_vector_left[0], optical_axis_vector_left[2]]
+            )
+            # Normalize and rescale the vector to make it easier to see in the
+            # plot.
+            optaxis_left_xz /= np.linalg.norm(optaxis_left_xz)
+            optaxis_left_xz *= 125
+            start = (eye_center_left[0], eye_center_left[2])
+            end = (
+                eye_center_left[0] + optaxis_left_xz[0],
+                eye_center_left[2] + optaxis_left_xz[1],
+            )
+            threeD_viz.optaxes_left_xz_plot.set_positions(start, end)
 
-            # # Normalize and rescale the vector to make it easier to see in the
-            # # plot.
-            # optaxis_left_xz /= np.linalg.norm(optaxis_left_xz)
-            # optaxis_left_xz *= 125
+            optaxis_right_xz = np.array(
+                [optical_axis_vector_right[0], optical_axis_vector_right[2]]
+            )
+            optaxis_right_xz /= np.linalg.norm(optaxis_right_xz)
+            optaxis_right_xz *= 125
+            start = (eye_center_right[0], eye_center_right[2])
+            end = (
+                eye_center_right[0] + optaxis_right_xz[0],
+                eye_center_right[2] + optaxis_right_xz[1],
+            )
+            threeD_viz.optaxes_right_xz_plot.set_positions(start, end)
 
-            # # Again, some matplotlib objects need to be manually removed, before you
-            # # draw the next frame. Comment the `remove()` line below to see what happens,
-            # # if you don't do this.
-            # optaxes_left_xz_plot.remove()
-            # optaxes_left_xz_plot = inset_ax_optaxes_xz.quiver(
-            #     eye_center_left[0],
-            #     eye_center_left[2],
-            #     optaxis_left_xz[0],
-            #     optaxis_left_xz[1],
-            #     color=(101 / 255, 188 / 255, 118 / 255),
-            #     scale=1,
-            #     scale_units="xy",
-            #     angles="xy",
-            #     width=0.01,
-            # )
+            # We do similar for the side-profile view of the optical axes.
+            optaxis_left_zy = np.array(
+                [optical_axis_vector_left[2], optical_axis_vector_left[1]]
+            )
+            optaxis_left_zy /= np.linalg.norm(optaxis_left_zy)
+            optaxis_left_zy *= 50
+            start = (eye_center_left[2], eye_center_left[1])
+            end = (
+                eye_center_left[2] + optaxis_left_zy[0],
+                eye_center_left[1] + optaxis_left_zy[1],
+            )
+            threeD_viz.optaxes_left_zy_plot.set_positions(start, end)
 
-            # # Plot the right optical axis vector in an overhead view.
-            # optaxis_right_xz = np.array(
-            #     [optical_axis_vector_right[0], optical_axis_vector_right[2]]
-            # )
-            # optaxis_right_xz /= np.linalg.norm(optaxis_right_xz)
-            # optaxis_right_xz *= 125
-            # optaxes_right_xz_plot.remove()
-            # optaxes_right_xz_plot = inset_ax_optaxes_xz.quiver(
-            #     eye_center_right[0],
-            #     eye_center_right[2],
-            #     optaxis_right_xz[0],
-            #     optaxis_right_xz[1],
-            #     color=(229 / 255, 111 / 255, 114 / 255),
-            #     scale=1,
-            #     scale_units="xy",
-            #     angles="xy",
-            #     width=0.01,
-            # )
-
-            # # We do similar for the side-profile view of the optical axes.
-            # optaxis_left_zy = np.array(
-            #     [optical_axis_vector_left[2], optical_axis_vector_left[1]]
-            # )
-            # optaxis_left_zy /= np.linalg.norm(optaxis_left_zy)
-            # optaxis_left_zy *= 50
-            # optaxes_left_zy_plot.remove()
-            # optaxes_left_zy_plot = inset_ax_optaxes_zy.quiver(
-            #     eye_center_left[2],
-            #     eye_center_left[1],
-            #     optaxis_left_zy[0],
-            #     optaxis_left_zy[1],
-            #     color=(101 / 255, 188 / 255, 118 / 255),
-            #     scale=1,
-            #     scale_units="xy",
-            #     angles="xy",
-            #     width=0.01,
-            # )
-
-            # optaxis_right_zy = np.array(
-            #     [optical_axis_vector_right[2], optical_axis_vector_right[1]]
-            # )
-            # optaxis_right_zy /= np.linalg.norm(optaxis_right_zy)
-            # optaxis_right_zy *= 50
-            # optaxes_right_zy_plot.remove()
-            # optaxes_right_zy_plot = inset_ax_optaxes_zy.quiver(
-            #     eye_center_right[2],
-            #     eye_center_right[1],
-            #     optaxis_right_zy[0],
-            #     optaxis_right_zy[1],
-            #     color=(229 / 255, 111 / 255, 114 / 255),
-            #     scale=1,
-            #     scale_units="xy",
-            #     angles="xy",
-            #     width=0.01,
-            # )
+            optaxis_right_zy = np.array(
+                [optical_axis_vector_right[2], optical_axis_vector_right[1]]
+            )
+            optaxis_right_zy /= np.linalg.norm(optaxis_right_zy)
+            optaxis_right_zy *= 50
+            start = (eye_center_right[2], eye_center_right[1])
+            end = (
+                eye_center_right[2] + optaxis_right_zy[0],
+                eye_center_right[1] + optaxis_right_zy[1],
+            )
+            threeD_viz.optaxes_right_zy_plot.set_positions(start, end)
 
         # Finally, we return a list of plot objects, per
         # matplotlib's conventions.
         return (
-            eyestate_ax.collections
+            threeD_viz.eyestate_ax.collections
             + [eye_left.optical_axis.optical_axis_quiver_plot]
             + [eye_right.optical_axis.optical_axis_quiver_plot]
-            # + [eye_image_plot]
-            # + [optaxes_left_xz_plot]
-            # + [optaxes_right_xz_plot]
-            # + [optaxes_left_zy_plot]
-            # + [optaxes_right_zy_plot]
+            + [threeD_viz.eye_image_plot]
+            + [threeD_viz.optaxes_left_xz_plot]
+            + [threeD_viz.optaxes_right_xz_plot]
+            + [threeD_viz.optaxes_left_zy_plot]
+            + [threeD_viz.optaxes_right_zy_plot]
         )
 
-    # Create a matplotlib animation function that will run the `update` function
-    # every 33ms. This will update our animation at ~30 FPS. We pass `blit=False`,
-    # because matplotlib's 3D functionality does not support blitting.
-    ani1 = animation.FuncAnimation(fig1, update1, interval=35, blit=False)
+    # Wrap the actual animation "loop" in a try-except-finally block.
+    # This is done because if anything goes wrong or the
+    # user quits the program, then we need to cleanly close our
+    # connection to Neon and clean up any OpenCV windows.
+    try:
+        # Create a matplotlib animation function that will run the `update` function
+        # every 33ms. This will update our animation at ~30 FPS. We pass `blit=False`,
+        # because matplotlib's 3D functionality does not support blitting.
+        ani = animation.FuncAnimation(threeD_viz.fig, update, interval=33, blit=False)
 
-    # This helps to make use of the full figure plotting real-estate.
-    plt.tight_layout()
+        plt.tight_layout()
+        plt.show()
 
-    # Finally, show the plot with the animation! :-)
-    plt.show()
+    except Exception as e:
+        print(f"Error occurred: {e}")
 
-except Exception as e:
-    print(f"Error occurred: {e}")
-
-finally:
-    # No matter what happens, we need to clean close our connection to Neon
-    # and close all OpenCV windows.
-    device.close()
-    cv2.destroyAllWindows()
+    finally:
+        # No matter what happens, we need to clean close our connection to Neon
+        # and close all OpenCV windows.
+        device.close()
+        cv2.destroyAllWindows()
