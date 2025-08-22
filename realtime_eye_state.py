@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "opencv-python",
+#     "numpy",
+#     "pupil-labs-realtime-api",
+#     "matplotlib",
+# ]
+# ///
+
 import threading
 from queue import Empty, Queue
 
@@ -7,14 +17,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import FancyArrowPatch
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-from pupil_labs.realtime_api.simple import Device
-
+from pupil_labs.realtime_api.simple import Device, discover_one_device
 from threeD_eye_model import ThreeDEyeModel
 
 # --- Configuration Constants ---
-DEVICE_ADDRESS = "192.168.1.34"
-DEVICE_PORT = 8080
-ANIMATION_FRAME_RATE = 30  # FPS
+FALLBACK_DEVICE_ADDRESS: str = "192.168.1.34"
+FALLBACK_DEVICE_PORT: int = 8080
+ANIMATION_FRAME_RATE: int = 30  # FPS
 
 # We will use a background thread to collect data
 # via Neon's Real-time API. This helps to offload the data
@@ -41,13 +50,11 @@ def data_acquisition_loop():
         if data_queue.full():
             data_queue.get_nowait()
 
-        data_queue.put_nowait(
-            {
-                "eye": eye_image.bgr_pixels,
-                "gaze": gaze,
-                "scene": scene_image.bgr_pixels,
-            }
-        )
+        data_queue.put_nowait({
+            "eye": eye_image.bgr_pixels,
+            "gaze": gaze,
+            "scene": scene_image.bgr_pixels,
+        })
 
 
 # Now, we make class to hold all the elements of the matplotlib figure.
@@ -82,14 +89,10 @@ class ThreeDVisualization:
         # Makes sure that 3D plots have equal aspect ratio on all sides.
         # Adapted from:
         # https://github.com/matplotlib/matplotlib/issues/17172#issuecomment-830139107
-        self.eyestate_ax.set_box_aspect(
-            [
-                ub - lb
-                for lb, ub in (
-                    getattr(self.eyestate_ax, f"get_{a}lim")() for a in "xyz"
-                )
-            ]
-        )
+        self.eyestate_ax.set_box_aspect([
+            ub - lb
+            for lb, ub in (getattr(self.eyestate_ax, f"get_{a}lim")() for a in "xyz")
+        ])
 
         self.eyestate_ax.set_xlabel("X")
         self.eyestate_ax.set_ylabel("Z")
@@ -110,7 +113,7 @@ class ThreeDVisualization:
         # in order to have a plot object that will be updated
         # in the animation loop
         self.eye_image_plot = inset_ax_eye_image.imshow(
-            np.zeros((192, int(192 * 2), 3), dtype=np.uint8)
+            np.zeros((192, (192 * 2), 3), dtype=np.uint8)
         )  # placeholder
 
         self.optaxes_left_xz_arrow, self.optaxes_right_xz_arrow = (
@@ -171,9 +174,12 @@ class ThreeDVisualization:
 
 if __name__ == "__main__":
     # First, establish a connection to Neon.
-    print(f"Connecting to device at {DEVICE_ADDRESS}:{DEVICE_PORT}...")
-    # device = discover_one_device()
-    device = Device(address="192.168.1.34", port=8080)
+    device = discover_one_device(max_search_duration_seconds=10)
+    if device is None:
+        device = Device(address=FALLBACK_DEVICE_ADDRESS, port=FALLBACK_DEVICE_PORT)
+    if device is None:
+        raise RuntimeError("No device found.")
+    print(f"Connecting to device at {device.address}:{device.port}...")
     print("Connection successful.")
 
     # Start up the data acquisition threads.
@@ -241,20 +247,16 @@ if __name__ == "__main__":
         # If there is gaze data available, then update the
         # ThreeDEyeModels and the optical axis plots.
         if gaze is not None:
-            eye_center_left = np.array(
-                [
-                    gaze.eyeball_center_left_x,
-                    gaze.eyeball_center_left_y,
-                    gaze.eyeball_center_left_z,
-                ]
-            )
-            optical_axis_vector_left = np.array(
-                [
-                    gaze.optical_axis_left_x,
-                    gaze.optical_axis_left_y,
-                    gaze.optical_axis_left_z,
-                ]
-            )
+            eye_center_left = np.array([
+                gaze.eyeball_center_left_x,
+                gaze.eyeball_center_left_y,
+                gaze.eyeball_center_left_z,
+            ])
+            optical_axis_vector_left = np.array([
+                gaze.optical_axis_left_x,
+                gaze.optical_axis_left_y,
+                gaze.optical_axis_left_z,
+            ])
             pupil_diameter_left = gaze.pupil_diameter_left
             eye_left.update(
                 eye_center_left,
@@ -264,20 +266,16 @@ if __name__ == "__main__":
                 gaze.eyelid_angle_bottom_left,
             )
 
-            eye_center_right = np.array(
-                [
-                    gaze.eyeball_center_right_x,
-                    gaze.eyeball_center_right_y,
-                    gaze.eyeball_center_right_z,
-                ]
-            )
-            optical_axis_vector_right = np.array(
-                [
-                    gaze.optical_axis_right_x,
-                    gaze.optical_axis_right_y,
-                    gaze.optical_axis_right_z,
-                ]
-            )
+            eye_center_right = np.array([
+                gaze.eyeball_center_right_x,
+                gaze.eyeball_center_right_y,
+                gaze.eyeball_center_right_z,
+            ])
+            optical_axis_vector_right = np.array([
+                gaze.optical_axis_right_x,
+                gaze.optical_axis_right_y,
+                gaze.optical_axis_right_z,
+            ])
             pupil_diameter_right = gaze.pupil_diameter_right
             eye_right.update(
                 eye_center_right,
@@ -298,9 +296,10 @@ if __name__ == "__main__":
             eye_right.plot(threeD_viz.eyestate_ax, threeD_viz.RED)
 
             # Plot the optical axes from an overhead view.
-            optaxis_left_xz = np.array(
-                [optical_axis_vector_left[0], optical_axis_vector_left[2]]
-            )
+            optaxis_left_xz = np.array([
+                optical_axis_vector_left[0],
+                optical_axis_vector_left[2],
+            ])
             # Normalize and rescale the vector to make it easier to see in the
             # plot.
             optaxis_left_xz /= np.linalg.norm(optaxis_left_xz)
@@ -312,9 +311,10 @@ if __name__ == "__main__":
             )
             threeD_viz.optaxes_left_xz_arrow.set_positions(start, end)
 
-            optaxis_right_xz = np.array(
-                [optical_axis_vector_right[0], optical_axis_vector_right[2]]
-            )
+            optaxis_right_xz = np.array([
+                optical_axis_vector_right[0],
+                optical_axis_vector_right[2],
+            ])
             optaxis_right_xz /= np.linalg.norm(optaxis_right_xz)
             optaxis_right_xz *= 125
             start = (eye_center_right[0], eye_center_right[2])
@@ -325,9 +325,10 @@ if __name__ == "__main__":
             threeD_viz.optaxes_right_xz_arrow.set_positions(start, end)
 
             # We do similar for the side-profile view of the optical axes.
-            optaxis_left_zy = np.array(
-                [optical_axis_vector_left[2], optical_axis_vector_left[1]]
-            )
+            optaxis_left_zy = np.array([
+                optical_axis_vector_left[2],
+                optical_axis_vector_left[1],
+            ])
             optaxis_left_zy /= np.linalg.norm(optaxis_left_zy)
             optaxis_left_zy *= 50
             start = (eye_center_left[2], eye_center_left[1])
@@ -337,9 +338,10 @@ if __name__ == "__main__":
             )
             threeD_viz.optaxes_left_zy_arrow.set_positions(start, end)
 
-            optaxis_right_zy = np.array(
-                [optical_axis_vector_right[2], optical_axis_vector_right[1]]
-            )
+            optaxis_right_zy = np.array([
+                optical_axis_vector_right[2],
+                optical_axis_vector_right[1],
+            ])
             optaxis_right_zy /= np.linalg.norm(optaxis_right_zy)
             optaxis_right_zy *= 50
             start = (eye_center_right[2], eye_center_right[1])
