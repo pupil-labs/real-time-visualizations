@@ -22,7 +22,7 @@ from pupil_labs.realtime_api.simple import Device, discover_one_device
 from threeD_eye_model import ThreeDEyeModel
 
 # --- Configuration Constants ---
-FALLBACK_DEVICE_ADDRESS: str = "192.168.1.34"
+FALLBACK_DEVICE_ADDRESS: str = "192.168.0.26"
 FALLBACK_DEVICE_PORT: int = 8080
 ANIMATION_FRAME_RATE: int = 30  # FPS
 
@@ -101,9 +101,6 @@ class Visualization:
             ]
         )
 
-        self.eyestate_ax.set_xlabel("X")
-        self.eyestate_ax.set_ylabel("Z")
-        self.eyestate_ax.set_zlabel("Y")
         self.eyestate_ax.set(xticklabels=[], yticklabels=[], zticklabels=[])
         self.eyestate_ax.grid(False)
         self.eyestate_ax.set_axis_off()
@@ -137,7 +134,7 @@ class Visualization:
                 loc="lower right",
                 bbox_to_anchor=(-0.15, 0, 1, 1),
                 xlim=(-60, 30),
-                ylim=(-10, 35),
+                ylim=(35, -10),
                 title="Optical Axes (Z,Y)",
             )
         )

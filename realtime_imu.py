@@ -20,7 +20,7 @@ from pupil_labs.realtime_api.simple import Device, discover_one_device
 from scipy.spatial.transform import Rotation as R
 
 # --- Configuration Constants ---
-FALLBACK_DEVICE_ADDRESS: str = "192.168.1.34"
+FALLBACK_DEVICE_ADDRESS: str = "192.168.0.183"
 FALLBACK_DEVICE_PORT: int = 8080
 ANIMATION_FRAME_RATE: int = 30  # FPS
 MODEL_FILE = Path(__file__).parent / "imu.obj"
@@ -112,10 +112,6 @@ class Visualization:
         self.ax.set_axis_off()
 
         self.ax.set_facecolor("black")
-
-        self.ax.set_xlabel("X")
-        self.ax.set_ylabel("Y")
-        self.ax.set_zlabel("Z")
 
     def _add_base_IMU_mesh(self):
         mesh = [[self.original_vertices[idx] for idx in face] for face in self.faces]

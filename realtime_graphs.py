@@ -23,7 +23,7 @@ from pupil_labs.realtime_api.streaming.eye_events import (
 )
 
 # --- Configuration Constants ---
-FALLBACK_DEVICE_ADDRESS: str = "192.168.1.34"
+FALLBACK_DEVICE_ADDRESS: str = "192.168.0.183"
 FALLBACK_DEVICE_PORT: int = 8080
 ANIMATION_FRAME_RATE: int = 30  # FPS
 TIMESERIES_DATA_POINTS: int = 200  # Number of points to show in plots
@@ -134,7 +134,7 @@ class Visualization:
 
         # Pupil diameter subplot
         self.ax_pupil_diameter.set_facecolor("black")
-        self.ax_pupil_diameter.set_xlim(0, 200)
+        self.ax_pupil_diameter.set_xlim(0, TIMESERIES_DATA_POINTS)
         self.ax_pupil_diameter.set_ylim(0, 8.0)
         self.ax_pupil_diameter.set_xticklabels([])
         self.ax_pupil_diameter.set_yticklabels([])
