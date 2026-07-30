@@ -17,7 +17,8 @@ The components in this respository are:
 
 - Live update of graphs that display pupil diameter and blinks:
 
-  - `realtime_graphs.py`
+  - `realtime_pupil_diameter.py`
+  - `realtime_blinks.py`
 
 To try them, first make sure that your Neon and computer are connected to the same local network. Then, you can simply start them with the `uv` command-line tool. For example:
 
