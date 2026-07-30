@@ -1,5 +1,8 @@
+opencv-python
 numpy
-scipy
-matplotlib
 pupil-labs-realtime-api
-opencv-python 
+matplotlib
+pyqtgraph
+PySide6
+PyOpenGL
+pglive
