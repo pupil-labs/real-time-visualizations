@@ -34,11 +34,11 @@ from PySide6.QtWidgets import (
 )
 
 import colors
-from rt_api_viz_al.threeD_eye_model import ThreeDEyeModel
+from threeD_eye_model import ThreeDEyeModel
 
 
 # --- Configuration Constants ---
-FALLBACK_DEVICE_ADDRESS: str = "192.168.1.229"
+FALLBACK_DEVICE_ADDRESS: str = "192.168.178.36"
 FALLBACK_DEVICE_PORT: int = 8080
 ANIMATION_FRAME_RATE: int = 30  # FPS
 

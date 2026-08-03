@@ -25,7 +25,8 @@ from PySide6.QtWidgets import (
 from scipy.spatial.transform import Rotation as R
 
 import colors
-from rt_api_viz_al.threeD_eye_model import ThreeDEyeModel
+from threeD_eye_model import ThreeDEyeModel
+
 
 
 class CenteredArrowItem(pg.ArrowItem):
@@ -77,7 +78,7 @@ class CenteredArrowItem(pg.ArrowItem):
 
 # --- Configuration Constants ---
 # FALLBACK_DEVICE_ADDRESS: str = "192.168.1.229"
-FALLBACK_DEVICE_ADDRESS: str = "10.21.163.77"
+FALLBACK_DEVICE_ADDRESS: str = "192.168.178.36"
 FALLBACK_DEVICE_PORT: int = 8080
 ANIMATION_FRAME_RATE: int = 30  # FPS
 MODEL_FILE = Path(__file__).parent / "imu.obj"
@@ -474,10 +475,6 @@ class Visualization(QMainWindow):
         size = 64
         dummy_texture_data = np.empty((size, size, 4), dtype=np.ubyte)
 
-        checkerboard = np.indices((size, size)).sum(axis=0) % 2
-        dummy_texture_data[checkerboard == 0] = (0, 0, 0, 255)
-        dummy_texture_data[checkerboard == 1] = (255, 255, 255, 255)
-
         self.eye_texture_left = gl.GLImageItem(dummy_texture_data, smooth=True)
         self.eye_texture_left.scale(0.25, 0.25, 1)
         self.eye_texture_left.rotate(75, 1, 0, 0)
@@ -653,8 +650,8 @@ class Visualization(QMainWindow):
             )
             euler_gaze = cartesian_to_spherical_world(cartesian_gaze_in_world)
 
-            self.gaze_nsew_arrow.setStyle(angle=(-euler_gaze[1] + 90) % 360)
-            self.gaze_earth_sky_arrow.setStyle(angle=euler_gaze[0] % 360)
+            self.gaze_nsew_arrow.setStyle(angle=(-euler_gaze[1][0] + 90) % 360)
+            self.gaze_earth_sky_arrow.setStyle(angle=euler_gaze[0][0] % 360)
 
 
 if __name__ == "__main__":
