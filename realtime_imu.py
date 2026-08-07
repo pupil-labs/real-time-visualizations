@@ -28,36 +28,6 @@ import colors
 from threeD_eye_model import ThreeDEyeModel, apply_pose_to_texture
 
 
-POSE_EYE_CAM0 = np.array(
-    [
-        [-0.83205668, -0.15655432, -0.53196133, 17.51665135],
-        [-0.06130652, 0.97938445, -0.19230749, 19.34052655],
-        [0.55113206, -0.1274955, -0.82454234, -7.94343579],
-        [0.0, 0.0, 0.0, 1.0],
-    ]
-)
-
-# Account for difference between Neon's coordinate system and GLImageItem's coordinate system
-t = POSE_EYE_CAM0[1, :].copy()
-POSE_EYE_CAM0[1, :] = POSE_EYE_CAM0[2, :].copy()
-POSE_EYE_CAM0[2, :] = t
-POSE_EYE_CAM0[2, :3] = -POSE_EYE_CAM0[2, :3].copy()
-
-POSE_EYE_CAM1 = np.array(
-    [
-        [-0.83205668, 0.15655432, 0.53196133, -17.51665135],
-        [0.06130652, 0.97938445, -0.19230749, 19.34052655],
-        [-0.55113206, -0.1274955, -0.82454234, -7.94343579],
-        [0.0, 0.0, 0.0, 1.0],
-    ]
-)
-
-# Account for difference between Neon's coordinate system and GLImageItem's coordinate system
-t = POSE_EYE_CAM1[1, :].copy()
-POSE_EYE_CAM1[1, :] = POSE_EYE_CAM1[2, :].copy()
-POSE_EYE_CAM1[2, :] = t
-POSE_EYE_CAM1[2, :3] = -POSE_EYE_CAM1[2, :3].copy()
-
 class CenteredArrowItem(pg.ArrowItem):
     def setStyle(self, **opts):
         # http://www.pyqtgraph.org/documentation/_modules/pyqtgraph/graphicsItems/ArrowItem.html#ArrowItem.setStyle
@@ -506,11 +476,11 @@ class Visualization(QMainWindow):
         texture_scale = 0.25
 
         self.eye_texture_left = gl.GLImageItem(dummy_texture_data, smooth=True)
-        apply_pose_to_texture(self.eye_texture_left, POSE_EYE_CAM0, size, texture_scale)
+        apply_pose_to_texture(self.eye_texture_left, 0, size, texture_scale)
         self.threeD_eye_view.addItem(self.eye_texture_left)
 
         self.eye_texture_right = gl.GLImageItem(dummy_texture_data, smooth=True)
-        apply_pose_to_texture(self.eye_texture_right, POSE_EYE_CAM1, size, texture_scale)
+        apply_pose_to_texture(self.eye_texture_right, 1, size, texture_scale)
         self.threeD_eye_view.addItem(self.eye_texture_right)
 
         # Load your OBJ file

@@ -5,9 +5,35 @@ from scipy.spatial.transform import Rotation as R
 import colors
 
 
+def _neon_to_gl_pose(pose: np.ndarray) -> np.ndarray:
+    """Swap Y/Z rows and negate the new Z rotation to match GLImageItem axes."""
+    m = pose.copy()
+    m[1], m[2] = pose[2].copy(), pose[1].copy()
+    m[2, :3] *= -1
+    return m
+
+
+POSE_EYE_CAM0 = _neon_to_gl_pose(np.array(
+    [
+        [-0.83205668, -0.15655432, -0.53196133, 17.51665135],
+        [-0.06130652, 0.97938445, -0.19230749, 19.34052655],
+        [0.55113206, -0.1274955, -0.82454234, -7.94343579],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+))
+POSE_EYE_CAM1 = _neon_to_gl_pose(np.array(
+    [
+        [-0.83205668, 0.15655432, 0.53196133, -17.51665135],
+        [0.06130652, 0.97938445, -0.19230749, 19.34052655],
+        [-0.55113206, -0.1274955, -0.82454234, -7.94343579],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+))
+
+
 def apply_pose_to_texture(
     texture_item,
-    pose,
+    camera,
     size,
     texture_scale,
 ):
@@ -17,10 +43,19 @@ def apply_pose_to_texture(
     corner-based. This helper applies scale, rotation, and then computes the
     translated corner so the image center matches the pose center.
     """
+    if camera == 0:
+        pose = POSE_EYE_CAM0
+    elif camera == 1:
+        pose = POSE_EYE_CAM1
+
     texture_item.scale(texture_scale, texture_scale, 1)
 
-    # The extra rotations about y and z account for difference between Neon's coordinate system and GLImageItem's coordinate system
-    pose_rot = R.from_euler("y", 180, degrees=True) * R.from_euler("z", 180, degrees=True) * R.from_matrix(pose[:3, :3])
+    # The extra rotations about y and z account for differences between Neon's coordinate system and GLImageItem's coordinate system
+    pose_rot = (
+        R.from_euler("y", 180, degrees=True)
+        * R.from_euler("z", 180, degrees=True)
+        * R.from_matrix(pose[:3, :3])
+    )
 
     rotvec = pose_rot.as_rotvec()
     angle_rad = np.linalg.norm(rotvec)
@@ -30,12 +65,8 @@ def apply_pose_to_texture(
 
     half_local = np.array([0.5 * size * texture_scale, 0.5 * size * texture_scale, 0.0])
 
-    # Account for difference between Neon's coordinate system and GLImageItem's coordinate system
     t = pose[:3, 3].copy()
-    s = t[1]
-    t[1] = t[2]
-    t[2] = s
-    t[2] *= -1.0
+    t[1], t[2] = t[2], -t[1]
 
     corner_world = t - pose_rot.apply(half_local)
     texture_item.translate(corner_world[0], corner_world[1], corner_world[2])
@@ -512,6 +543,7 @@ class ThreeDEyeModel:
             ]
         )
 
+        # Account for differences between Neon and GLImageItem coordinate systems
         self.optical_axis_vector = np.array(
             [
                 new_optical_axis_vector[0],

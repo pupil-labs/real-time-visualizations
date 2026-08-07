@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
 )
 
 import colors
-from threeD_eye_model import ThreeDEyeModel
+from threeD_eye_model import ThreeDEyeModel, apply_pose_to_texture
 
 BLINK_PULSE_DURATION_S: float = 0.05
 
@@ -267,18 +267,14 @@ class Visualization(QMainWindow):
         dummy_texture_data[checkerboard == 0] = (0, 0, 0, 255)
         dummy_texture_data[checkerboard == 1] = (255, 255, 255, 255)
 
+        texture_scale = 0.25
+
         self.eye_texture_left = gl.GLImageItem(dummy_texture_data, smooth=True)
-        self.eye_texture_left.scale(0.25, 0.25, 1)
-        self.eye_texture_left.rotate(75, 1, 0, 0)
-        self.eye_texture_left.rotate(30, 0, 0, 1)
-        self.eye_texture_left.translate(8, 15, -25)
+        apply_pose_to_texture(self.eye_texture_left, 0, size, texture_scale)
         self.view.addItem(self.eye_texture_left)
 
         self.eye_texture_right = gl.GLImageItem(dummy_texture_data, smooth=True)
-        self.eye_texture_right.scale(0.25, 0.25, 1)
-        self.eye_texture_right.rotate(75, 1, 0, 0)
-        self.eye_texture_right.rotate(-30, 0, 0, 1)
-        self.eye_texture_right.translate(-22, 23, -25)
+        apply_pose_to_texture(self.eye_texture_right, 1, size, texture_scale)
         self.view.addItem(self.eye_texture_right)
 
     def update_plot(self):
