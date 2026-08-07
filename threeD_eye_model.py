@@ -1,7 +1,44 @@
 import numpy as np
 import pyqtgraph.opengl as gl
+from scipy.spatial.transform import Rotation as R
 
 import colors
+
+
+def apply_pose_to_texture(
+    texture_item,
+    pose,
+    size,
+    texture_scale,
+):
+    """Apply pose-defined transform to a GLImageItem.
+
+    The pose translation is center-based, while GLImageItem translation is
+    corner-based. This helper applies scale, rotation, and then computes the
+    translated corner so the image center matches the pose center.
+    """
+    texture_item.scale(texture_scale, texture_scale, 1)
+
+    # The extra rotations about y and z account for difference between Neon's coordinate system and GLImageItem's coordinate system
+    pose_rot = R.from_euler("y", 180, degrees=True) * R.from_euler("z", 180, degrees=True) * R.from_matrix(pose[:3, :3])
+
+    rotvec = pose_rot.as_rotvec()
+    angle_rad = np.linalg.norm(rotvec)
+    if angle_rad > 1e-12:
+        axis = rotvec / angle_rad
+    texture_item.rotate(np.rad2deg(angle_rad), axis[0], axis[1], axis[2])
+
+    half_local = np.array([0.5 * size * texture_scale, 0.5 * size * texture_scale, 0.0])
+
+    # Account for difference between Neon's coordinate system and GLImageItem's coordinate system
+    t = pose[:3, 3].copy()
+    s = t[1]
+    t[1] = t[2]
+    t[2] = s
+    t[2] *= -1.0
+
+    corner_world = t - pose_rot.apply(half_local)
+    texture_item.translate(corner_world[0], corner_world[1], corner_world[2])
 
 
 class OpticalAxis:
@@ -471,7 +508,7 @@ class ThreeDEyeModel:
             [
                 new_eyeball_center[0],
                 new_eyeball_center[2],
-                -1 * new_eyeball_center[1],
+                new_eyeball_center[1],
             ]
         )
 

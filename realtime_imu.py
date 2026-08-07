@@ -25,9 +25,38 @@ from PySide6.QtWidgets import (
 from scipy.spatial.transform import Rotation as R
 
 import colors
-from threeD_eye_model import ThreeDEyeModel
+from threeD_eye_model import ThreeDEyeModel, apply_pose_to_texture
 
 
+POSE_EYE_CAM0 = np.array(
+    [
+        [-0.83205668, -0.15655432, -0.53196133, 17.51665135],
+        [-0.06130652, 0.97938445, -0.19230749, 19.34052655],
+        [0.55113206, -0.1274955, -0.82454234, -7.94343579],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+)
+
+# Account for difference between Neon's coordinate system and GLImageItem's coordinate system
+t = POSE_EYE_CAM0[1, :].copy()
+POSE_EYE_CAM0[1, :] = POSE_EYE_CAM0[2, :].copy()
+POSE_EYE_CAM0[2, :] = t
+POSE_EYE_CAM0[2, :3] = -POSE_EYE_CAM0[2, :3].copy()
+
+POSE_EYE_CAM1 = np.array(
+    [
+        [-0.83205668, 0.15655432, 0.53196133, -17.51665135],
+        [0.06130652, 0.97938445, -0.19230749, 19.34052655],
+        [-0.55113206, -0.1274955, -0.82454234, -7.94343579],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+)
+
+# Account for difference between Neon's coordinate system and GLImageItem's coordinate system
+t = POSE_EYE_CAM1[1, :].copy()
+POSE_EYE_CAM1[1, :] = POSE_EYE_CAM1[2, :].copy()
+POSE_EYE_CAM1[2, :] = t
+POSE_EYE_CAM1[2, :3] = -POSE_EYE_CAM1[2, :3].copy()
 
 class CenteredArrowItem(pg.ArrowItem):
     def setStyle(self, **opts):
@@ -474,19 +503,14 @@ class Visualization(QMainWindow):
 
         size = 64
         dummy_texture_data = np.empty((size, size, 4), dtype=np.ubyte)
+        texture_scale = 0.25
 
         self.eye_texture_left = gl.GLImageItem(dummy_texture_data, smooth=True)
-        self.eye_texture_left.scale(0.25, 0.25, 1)
-        self.eye_texture_left.rotate(75, 1, 0, 0)
-        self.eye_texture_left.rotate(30, 0, 0, 1)
-        self.eye_texture_left.translate(8, 15, -25)
+        apply_pose_to_texture(self.eye_texture_left, POSE_EYE_CAM0, size, texture_scale)
         self.threeD_eye_view.addItem(self.eye_texture_left)
 
         self.eye_texture_right = gl.GLImageItem(dummy_texture_data, smooth=True)
-        self.eye_texture_right.scale(0.25, 0.25, 1)
-        self.eye_texture_right.rotate(75, 1, 0, 0)
-        self.eye_texture_right.rotate(-30, 0, 0, 1)
-        self.eye_texture_right.translate(-22, 23, -25)
+        apply_pose_to_texture(self.eye_texture_right, POSE_EYE_CAM1, size, texture_scale)
         self.threeD_eye_view.addItem(self.eye_texture_right)
 
         # Load your OBJ file

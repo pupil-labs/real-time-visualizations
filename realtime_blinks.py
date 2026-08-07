@@ -134,109 +134,6 @@ def video_writing_loop():
     video_writing_loop.render_writer.release()
 
 
-def cartesian_to_spherical(vec):
-    x = vec[0]
-    y = vec[1]
-    z = vec[2]
-
-    radii = np.sqrt(x**2 + y**2 + z**2)
-
-    elevation = -(np.arccos(z / radii) - np.pi / 2)
-    azimuth = np.arctan2(y, x) - np.pi / 2
-
-    return azimuth, elevation
-
-
-def closest_points_between_rays(p1, d1, p2, d2, eps=1e-8):
-    """
-    Given two rays (p1 + s * d1) and (p2 + t * d2) with d1,d2 as direction vectors
-    (need not be normalized), compute the closest points on each infinite line,
-    their midpoint, the separation distance, and the vergence angle (deg)
-    based on the midpoint.
-
-    Args:
-        p1, p2: array-like, shape (3,) - origins of the two rays (eye positions)
-        d1, d2: array-like, shape (3,) - direction vectors of the optical axes
-        eps: float - small threshold for handling near-parallel lines
-
-    Returns:
-        dict with keys:
-          'p_closest_1' : closest point on line1 (3,)
-          'p_closest_2' : closest point on line2 (3,)
-          'midpoint'    : (p_closest_1 + p_closest_2) / 2
-          'separation'  : ||p_closest_1 - p_closest_2|| (distance between the two closest points)
-          'vergence_deg' : vergence angle in degrees (angle between gaze vectors to midpoint)
-          's' : parameter along line1 (p1 + s*d1)
-          't' : parameter along line2 (p2 + t*d2)
-          'parallel' : True if lines are (nearly) parallel
-    """
-    p1 = np.asarray(p1, dtype=float)
-    p2 = np.asarray(p2, dtype=float)
-    d1 = np.asarray(d1, dtype=float)
-    d2 = np.asarray(d2, dtype=float)
-
-    # normalize directions to avoid scale issues
-    n1 = np.linalg.norm(d1)
-    n2 = np.linalg.norm(d2)
-    if n1 == 0 or n2 == 0:
-        raise ValueError("Direction vectors must be non-zero")
-    u = d1 / n1
-    v = d2 / n2
-    w0 = p1 - p2
-
-    a = np.dot(u, u)  # =1
-    b = np.dot(u, v)
-    c = np.dot(v, v)  # =1
-    e = np.dot(u, w0)
-    f = np.dot(v, w0)
-
-    denom = a * c - b * b
-
-    result = {}
-    if abs(denom) < eps:
-        # Lines are nearly parallel. Choose s by projecting w0 onto u,
-        # and set t so the point on line2 is the projection of that point onto line2.
-        result["parallel"] = True
-        s = e / a
-        pt1 = p1 + s * u
-        # project vector (pt1 - p2) onto v to find t
-        t = np.dot(pt1 - p2, v) / 1.0
-        pt2 = p2 + t * v
-    else:
-        result["parallel"] = False
-        s = (b * f - c * e) / denom
-        t = (a * f - b * e) / denom
-        pt1 = p1 + s * u
-        pt2 = p2 + t * v
-
-    midpoint = 0.5 * (pt1 + pt2)
-    sep = np.linalg.norm(pt1 - pt2)
-
-    # compute vergence: vectors from each eye to midpoint
-    v1 = midpoint - p1
-    v2 = midpoint - p2
-    nv1 = np.linalg.norm(v1)
-    nv2 = np.linalg.norm(v2)
-    if nv1 == 0 or nv2 == 0:
-        vergence_deg = 0.0
-    else:
-        cosang = np.clip(np.dot(v1, v2) / (nv1 * nv2), -1.0, 1.0)
-        vergence_deg = np.degrees(np.arccos(cosang))
-
-    result.update(
-        {
-            "p_closest_1": pt1,
-            "p_closest_2": pt2,
-            "midpoint": midpoint,
-            "separation": sep,
-            "vergence_deg": vergence_deg,
-            "s": s,
-            "t": t,
-        }
-    )
-    return result
-
-
 # Now, we make class to hold all the elements of the matplotlib figure.
 # This makes it easier to organize the visualization logic later.
 # The figure will have three sections:
@@ -520,8 +417,8 @@ class Visualization(QMainWindow):
                 gaze.eyelid_angle_bottom_right,
             )
 
-            self.data_connector_left.cb_append_data_point(pupil_diameter_left)
-            self.data_connector_right.cb_append_data_point(pupil_diameter_right)
+            self.data_connector_left.cb_append_data_point(gaze.eyelid_aperture_left)
+            self.data_connector_right.cb_append_data_point(gaze.eyelid_aperture_right)
 
         if isinstance(eye_event, BlinkEventData):
             viz.blink_end_time_ns = time.time_ns() + (BLINK_PULSE_DURATION_S * 1e9)
