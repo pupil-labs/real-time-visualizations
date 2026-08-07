@@ -6,3 +6,4 @@ pyqtgraph
 PySide6
 PyOpenGL
 pglive
+scipy

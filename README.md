@@ -2,7 +2,7 @@
 
 This repository accompanies our Real-time Visualization Alpha Lab guide.
 
-It demonstrates Neon's [Real-time API](https://docs.pupil-labs.com/neon/real-time-api/) with different visualizations, separated into self-contained Python files. The components are programmed in Python and Matplotlib to focus on the core concepts and enable accessibility.
+It demonstrates Neon's [Real-time API](https://docs.pupil-labs.com/neon/real-time-api/) with different visualizations, separated into individual examples. The components are programmed in Python, Matplotlib, and PyQtGraph to focus on the core concepts and enable accessibility.
 
 The components in this respository are:
 
@@ -20,7 +20,7 @@ The components in this respository are:
   - `realtime_pupil_diameter.py`
   - `realtime_blinks.py`
 
-To try them, first make sure that your Neon and computer are connected to the same local network. Then, you can simply start them with the `uv` command-line tool. For example:
+To try them, first make sure that your Neon and computer are connected to the same local network. Then, you can simply start an example with the `uv` command-line tool. For example:
 
 ```shell
 uv run -s realtime_eye_state.py

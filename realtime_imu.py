@@ -1,3 +1,16 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "opencv-python",
+#     "numpy",
+#     "pupil-labs-realtime-api",
+#     "pyqtgraph",
+#     "PySide6",
+#     "PyOpenGL",
+#     "scipy",
+# ]
+# ///
+
 import sys
 import threading
 from pathlib import Path
