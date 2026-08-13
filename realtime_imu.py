@@ -486,7 +486,7 @@ class Visualization(QMainWindow):
 
         size = 64
         dummy_texture_data = np.empty((size, size, 4), dtype=np.ubyte)
-        texture_scale = 0.25
+        texture_scale = 0.12
 
         self.eye_texture_left = gl.GLImageItem(dummy_texture_data, smooth=True)
         apply_pose_to_texture(self.eye_texture_left, 0, size, texture_scale)
@@ -552,8 +552,7 @@ class Visualization(QMainWindow):
                 eye_image_left, (64, 64), interpolation=cv2.INTER_AREA
             )
             eye_image_left_fin = np.flipud(
-                np.flipud(np.fliplr(np.rot90(eye_image_left_resized)))
-            )
+                np.fliplr(np.rot90(eye_image_left_resized)))
             eye_image_left_fin = pg.functions.makeARGB(eye_image_left_fin, useRGBA=True)
             # Reduce alpha channel (make more transparent)
             eye_image_left_fin[0][..., 3] = (
@@ -564,8 +563,7 @@ class Visualization(QMainWindow):
                 eye_image_right, (64, 64), interpolation=cv2.INTER_AREA
             )
             eye_image_right_fin = np.flipud(
-                np.flipud(np.fliplr(np.rot90(eye_image_right_resized)))
-            )
+                np.fliplr(np.rot90(eye_image_right_resized)))
             eye_image_right_fin = pg.functions.makeARGB(
                 eye_image_right_fin, useRGBA=True
             )

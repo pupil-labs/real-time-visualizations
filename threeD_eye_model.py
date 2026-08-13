@@ -13,22 +13,22 @@ def _neon_to_gl_pose(pose: np.ndarray) -> np.ndarray:
     return m
 
 
-POSE_EYE_CAM0 = _neon_to_gl_pose(np.array(
+POSE_EYE_CAM0 = _neon_to_gl_pose(np.linalg.inv(np.array(
     [
         [-0.83205668, -0.15655432, -0.53196133, 17.51665135],
         [-0.06130652, 0.97938445, -0.19230749, 19.34052655],
         [0.55113206, -0.1274955, -0.82454234, -7.94343579],
         [0.0, 0.0, 0.0, 1.0],
     ]
-))
-POSE_EYE_CAM1 = _neon_to_gl_pose(np.array(
+)))
+POSE_EYE_CAM1 = _neon_to_gl_pose(np.linalg.inv(np.array(
     [
         [-0.83205668, 0.15655432, 0.53196133, -17.51665135],
         [0.06130652, 0.97938445, -0.19230749, 19.34052655],
         [-0.55113206, -0.1274955, -0.82454234, -7.94343579],
         [0.0, 0.0, 0.0, 1.0],
     ]
-))
+)))
 
 
 def apply_pose_to_texture(
@@ -51,10 +51,10 @@ def apply_pose_to_texture(
     texture_item.scale(texture_scale, texture_scale, 1)
 
     # The extra rotations about y and z account for differences between Neon's coordinate system and GLImageItem's coordinate system
-    pose_rot = (
-        R.from_euler("y", 180, degrees=True)
-        * R.from_euler("z", 180, degrees=True)
-        * R.from_matrix(pose[:3, :3])
+    pose_rot = (R.from_matrix(pose[:3, :3])
+        # R.from_euler("y", 180, degrees=True)
+        # * R.from_euler("z", 180, degrees=True)
+        # * R.from_matrix(pose[:3, :3])
     )
 
     rotvec = pose_rot.as_rotvec()
@@ -326,7 +326,7 @@ class EyeLid:
 
 
 class Eyeball:
-    def __init__(self, eyeball_center, eyeball_radius=12.0, color=(0.5, 0.5, 0.5, 1.0)):
+    def __init__(self, eyeball_center, eyeball_radius=16.0, color=(0.5, 0.5, 0.5, 1.0)):
         self.eyeball_center = eyeball_center
         self.eyeball_radius = eyeball_radius
         self.color = color
