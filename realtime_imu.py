@@ -14,7 +14,7 @@
 import sys
 import threading
 from pathlib import Path
-from queue import Empty, Queue
+from queue import Empty, Full, Queue
 
 import cv2
 import numpy as np
@@ -38,7 +38,12 @@ from PySide6.QtWidgets import (
 from scipy.spatial.transform import Rotation as R
 
 import colors
-from threeD_eye_model import ThreeDEyeModel, apply_pose_to_texture
+from threeD_eye_model import (
+    ThreeDEyeModel,
+    apply_pose_to_texture,
+    configure_eye_camera_view,
+    make_eye_texture_pair,
+)
 
 
 class CenteredArrowItem(pg.ArrowItem):
@@ -89,8 +94,7 @@ class CenteredArrowItem(pg.ArrowItem):
 
 
 # --- Configuration Constants ---
-# FALLBACK_DEVICE_ADDRESS: str = "192.168.1.229"
-FALLBACK_DEVICE_ADDRESS: str = "192.168.178.36"
+FALLBACK_DEVICE_ADDRESS: str = "10.79.84.21"
 FALLBACK_DEVICE_PORT: int = 8080
 ANIMATION_FRAME_RATE: int = 30  # FPS
 MODEL_FILE = Path(__file__).parent / "imu.obj"
@@ -213,9 +217,23 @@ def load_obj(path):
     return np.array(vertices, dtype=float), np.array(faces, dtype=int)
 
 
+FRAME_QUEUE_MAXSIZE = 2
+ENABLE_VIDEO_RECORDING = True
+
 data_queue = Queue(maxsize=1)
-scene_queue = Queue()
-render_queue = Queue()
+scene_queue = Queue(maxsize=FRAME_QUEUE_MAXSIZE)
+render_queue = Queue(maxsize=FRAME_QUEUE_MAXSIZE)
+
+
+def put_latest(queue, item):
+    try:
+        queue.put_nowait(item)
+    except Full:
+        try:
+            queue.get_nowait()
+        except Empty:
+            pass
+        queue.put_nowait(item)
 
 
 def data_acquisition_loop():
@@ -232,97 +250,91 @@ def data_acquisition_loop():
         if not all((scene_image, eye_image, gaze, imu)):
             continue
 
-        # Clear out the queue if it's already full.
-        if data_queue.full():
-            data_queue.get()
-
-        data_queue.put(
+        put_latest(
+            data_queue,
             {
                 "eye": eye_image.bgr_pixels,
                 "imu": imu,
                 "gaze": gaze,
-            }
+            },
         )
 
-        scene_queue.put({"scene": scene_image.bgr_pixels, "gaze": gaze})
+        if ENABLE_VIDEO_RECORDING:
+            put_latest(scene_queue, {"scene": scene_image.bgr_pixels, "gaze": gaze})
 
 
 def video_writing_loop():
-    while True:
-        scene_data = scene_queue.get()
-        render_data = render_queue.get()
-
-        if scene_data is not None:
-            if scene_data == "stop" or render_data == "stop":
+    try:
+        while True:
+            scene_data = scene_queue.get()
+            if scene_data == "stop":
                 break
-            else:
-                scene_img = scene_data["scene"]
-                gaze = scene_data["gaze"]
-                render_img = render_data["img"]
-        else:
-            continue
 
-        if not hasattr(video_writing_loop, "writer"):
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            video_writing_loop.writer = cv2.VideoWriter(
-                "rt_imu_scene.mp4", fourcc, 29, (1600, 1200)
+            render_data = render_queue.get()
+            if render_data == "stop":
+                break
+
+            if not scene_data or not render_data:
+                continue
+
+            scene_img = scene_data["scene"]
+            gaze = scene_data["gaze"]
+            render_img = render_data["img"]
+
+            if not hasattr(video_writing_loop, "writer"):
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                video_writing_loop.writer = cv2.VideoWriter(
+                    "rt_imu_scene.mp4", fourcc, 29, (1600, 1200)
+                )
+
+            if not hasattr(video_writing_loop, "render_writer"):
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                video_writing_loop.render_writer = cv2.VideoWriter(
+                    "rt_imu_eye.mp4", fourcc, 29, (1200, 1200)
+                )
+
+            cv2.circle(
+                scene_img,
+                (int(gaze.x), int(gaze.y)),
+                radius=35,
+                color=(0, 0, 255),
+                thickness=8,
             )
 
-        if not hasattr(video_writing_loop, "render_writer"):
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            video_writing_loop.render_writer = cv2.VideoWriter(
-                "rt_imu_eye.mp4", fourcc, 29, (1200, 1200)
-            )
+            video_writing_loop.writer.write(scene_img)
 
-        cv2.circle(
-            scene_img,
-            (int(gaze.x), int(gaze.y)),
-            radius=80,
-            color=(0, 0, 255),
-            thickness=15,
-        )
-
-        video_writing_loop.writer.write(scene_img)
-
-        video_writing_loop.render_writer.write(render_img)
-
-    video_writing_loop.writer.release()
-    video_writing_loop.render_writer.release()
+            video_writing_loop.render_writer.write(render_img)
+    finally:
+        if hasattr(video_writing_loop, "writer") and video_writing_loop.writer is not None:
+            video_writing_loop.writer.release()
+        if hasattr(video_writing_loop, "render_writer") and video_writing_loop.render_writer is not None:
+            video_writing_loop.render_writer.release()
 
 
-# ---- Main PyQtGraph app ----
 class Visualization(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("3D Eye Model Visualization")
+        self.setWindowTitle("IMU Visualization")
         self.setGeometry(100, 100, 600, 600)
         self.setStyleSheet("background-color: rgb(0, 0, 0);")
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
 
         central = QWidget()
         layout = QVBoxLayout()
         central.setLayout(layout)
         self.setCentralWidget(central)
 
-        self.threeD_eye_view = gl.GLViewWidget()
-        # self.threeD_eye_view.setBackgroundColor(colors.BACKGROUND)
-        self.threeD_eye_view.setBackgroundColor(colors.BLACK)
-        self.threeD_eye_view.setCameraPosition(
-            distance=100,
-            elevation=-5,  # angle above XY plane
-            azimuth=10,  # rotation around Z axis
+        self.threeD_eye_view = configure_eye_camera_view(
+            name="threeD_eye_view",
         )
-        self.threeD_eye_view.pan(dx=0, dy=-12, dz=-17)
-        # self.threeD_eye_view.setAntialiasing(aa=True)
         layout.addWidget(self.threeD_eye_view, stretch=1)
 
         hlayout = QHBoxLayout()
         layout.addLayout(hlayout, stretch=1)
 
         self.imu_view = gl.GLViewWidget()
-        # self.imu_view.setBackgroundColor(colors.BACKGROUND)
         self.imu_view.setBackgroundColor(colors.BLACK)
         self.imu_view.setCameraPosition(distance=3)
-        # self.imu_view.setAntialiasing(aa=True)
         hlayout.addWidget(self.imu_view, stretch=1)
 
         self.nsew_plot = pg.plot()
@@ -477,6 +489,22 @@ class Visualization(QMainWindow):
         self.timer.timeout.connect(self.update_plot)
         self.timer.start(16)
 
+    def _apply_eye_texture_pose(self):
+        self.eye_texture_left.resetTransform()
+        apply_pose_to_texture(
+            self.eye_texture_left,
+            0,
+            self.texture_size,
+            self.texture_scale,
+        )
+        self.eye_texture_right.resetTransform()
+        apply_pose_to_texture(
+            self.eye_texture_right,
+            1,
+            self.texture_size,
+            self.texture_scale,
+        )
+
     def _setup_3d_scene(self):
         self.eye_left = ThreeDEyeModel(np.array([-30, 0, 0]), color=colors.RED)
         self.eye_left.add_to_view(self.threeD_eye_view)
@@ -484,20 +512,19 @@ class Visualization(QMainWindow):
         self.eye_right = ThreeDEyeModel(np.array([30, 0, 0]), color=colors.GREEN)
         self.eye_right.add_to_view(self.threeD_eye_view)
 
-        size = 64
-        dummy_texture_data = np.empty((size, size, 4), dtype=np.ubyte)
-        texture_scale = 0.12
+        self.texture_size = 84
+        dummy_texture_data = np.empty((self.texture_size, self.texture_size, 4), dtype=np.ubyte)
+        self.texture_scale = 0.16
 
         self.eye_texture_left = gl.GLImageItem(dummy_texture_data, smooth=True)
-        apply_pose_to_texture(self.eye_texture_left, 0, size, texture_scale)
+        apply_pose_to_texture(self.eye_texture_left, 0, self.texture_size, self.texture_scale)
         self.threeD_eye_view.addItem(self.eye_texture_left)
 
         self.eye_texture_right = gl.GLImageItem(dummy_texture_data, smooth=True)
-        apply_pose_to_texture(self.eye_texture_right, 1, size, texture_scale)
+        apply_pose_to_texture(self.eye_texture_right, 1, self.texture_size, self.texture_scale)
         self.threeD_eye_view.addItem(self.eye_texture_right)
 
-        # Load your OBJ file
-        vertices, faces = load_obj("imu.obj")  # 👈 replace with your .obj path
+        vertices, faces = load_obj("imu.obj")
 
         # Create mesh data and mesh item
         meshdata = MeshData(vertexes=vertices, faces=faces)
@@ -510,7 +537,6 @@ class Visualization(QMainWindow):
             edgeColor=(1, 1, 1, 1),
         )
 
-        # Optional: scale or rotate
         self.mesh_item.scale(1, 1, 1)
         self.mesh_item.translate(0, 0, 0)
 
@@ -531,7 +557,8 @@ class Visualization(QMainWindow):
 
         # Drop alpha and convert to BGR for OpenCV
         frame = cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
-        render_queue.put({"img": frame})
+        if ENABLE_VIDEO_RECORDING:
+            put_latest(render_queue, {"img": frame})
 
         imu = None
         gaze = None
@@ -545,35 +572,14 @@ class Visualization(QMainWindow):
             pass
 
         if eye_img is not None:
-            eye_image_left = eye_img[:, 192:, :]
-            eye_image_right = eye_img[:, :192, :]
-
-            eye_image_left_resized = cv2.resize(
-                eye_image_left, (64, 64), interpolation=cv2.INTER_AREA
+            size = int(self.texture_size)
+            eye_texture_left, eye_texture_right = make_eye_texture_pair(
+                eye_img,
+                size=size,
+                alpha_scale=0.75,
             )
-            eye_image_left_fin = np.flipud(
-                np.fliplr(np.rot90(eye_image_left_resized)))
-            eye_image_left_fin = pg.functions.makeARGB(eye_image_left_fin, useRGBA=True)
-            # Reduce alpha channel (make more transparent)
-            eye_image_left_fin[0][..., 3] = (
-                eye_image_left_fin[0][..., 3] * 0.5
-            ).astype(np.uint8)
-
-            eye_image_right_resized = cv2.resize(
-                eye_image_right, (64, 64), interpolation=cv2.INTER_AREA
-            )
-            eye_image_right_fin = np.flipud(
-                np.fliplr(np.rot90(eye_image_right_resized)))
-            eye_image_right_fin = pg.functions.makeARGB(
-                eye_image_right_fin, useRGBA=True
-            )
-            # Reduce alpha channel (make more transparent)
-            eye_image_right_fin[0][..., 3] = (
-                eye_image_right_fin[0][..., 3] * 0.5
-            ).astype(np.uint8)
-
-            self.eye_texture_left.setData(eye_image_left_fin[0])
-            self.eye_texture_right.setData(eye_image_right_fin[0])
+            self.eye_texture_left.setData(eye_texture_left)
+            self.eye_texture_right.setData(eye_texture_right)
 
         # If there is gaze data available, then update the
         # ThreeDEyeModels and the optical axis plots.
@@ -679,9 +685,11 @@ if __name__ == "__main__":
     )
     data_acquisition_thread.start()
 
-    # Start up the video writing thread.
-    video_writing_thread = threading.Thread(target=video_writing_loop, daemon=True)
-    video_writing_thread.start()
+    # Start up the video writing thread only when recording is enabled.
+    video_writing_thread = None
+    if ENABLE_VIDEO_RECORDING:
+        video_writing_thread = threading.Thread(target=video_writing_loop, daemon=True)
+        video_writing_thread.start()
 
     app = QApplication(sys.argv)
     pg.setConfigOptions(antialias=True)
@@ -697,8 +705,11 @@ if __name__ == "__main__":
     finally:
         # No matter what happens, we need to cleanly close our connection to Neon.
         print("Cleaning up resources...")
-        scene_queue.put("stop")
-        render_queue.put("stop")
+        if ENABLE_VIDEO_RECORDING and video_writing_thread is not None:
+            put_latest(scene_queue, "stop")
+            put_latest(render_queue, "stop")
+            video_writing_thread.join(timeout=5.0)
         device.close()
+        cv2.destroyAllWindows()
         print("Done.")
         sys.exit()

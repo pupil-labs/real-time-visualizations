@@ -1,52 +1,68 @@
 import numpy as np
+import cv2
 import pyqtgraph.opengl as gl
+from pyqtgraph import functions as fn
+from pyqtgraph.Qt import QtGui
 from scipy.spatial.transform import Rotation as R
 
 import colors
 
 
-def _neon_to_gl_pose(pose: np.ndarray) -> np.ndarray:
-    """Swap Y/Z rows and negate the new Z rotation to match GLImageItem axes."""
-    m = pose.copy()
-    m[1], m[2] = pose[2].copy(), pose[1].copy()
-    m[2, :3] *= -1
-    return m
+# In OpenGL coordinates relative to the top left corner of the eye image texture.
+POS_EYE_CAM0 = np.array([23.77497799, 18.14358681, -12.9157671])
+POS_EYE_CAM1 = np.array([-12.59, 16.0394139, -18.23442818])
 
 
-# POSE_EYE_CAM0 = _neon_to_gl_pose(np.linalg.inv(np.array(
-#     [
-#         [-0.83205668, -0.15655432, -0.53196133, 17.51665135],
-#         [-0.06130652, 0.97938445, -0.19230749, 19.34052655],
-#         [0.55113206, -0.1274955, -0.82454234, -7.94343579],
-#         [0.0, 0.0, 0.0, 1.0],
-#     ]
-# )))
-POSE_EYE_CAM0 = np.array(
-    [
-        [-0.83222177,  0.15656665,  0.53205583,  0.],
-        [-0.06127473, -0.97943461,  0.19240246,  0.],
-        [ 0.55120686,  0.12742246,  0.82465922,  0.],
-        [-9.01417674, 12.69747667, 22.14929918,  1.]
-    ]
-).T
+class YUpGLViewWidget(gl.GLViewWidget):
+    """GLViewWidget variant that uses a negative-Y-up orbital convention."""
+
+    _axis_neg_x = (1.0, 0.0, 0.0)
+    _axis_neg_y = (0.0, 1.0, 0.0)
+
+    def __init__(self, *args, name="camera", **kwargs):
+        super().__init__(*args, **kwargs)
+        self._camera_name = name
+        self._last_reported_angles = None
+
+    def viewMatrix(self):
+        tr = QtGui.QMatrix4x4()
+        tr.translate(0.0, 0.0, -self.opts["distance"])
+        tr.rotate(90 - self.opts["elevation"], *self._axis_neg_y)
+        tr.rotate(self.opts["azimuth"] + 90, *self._axis_neg_x)
+
+        center = self.opts["center"]
+        tr.translate(-center.x(), -center.y(), -center.z())
+        return tr
+
+    def mousePressEvent(self, ev):
+        ev.accept()
+
+    def mouseMoveEvent(self, ev):
+        ev.accept()
+
+    def mouseReleaseEvent(self, ev):
+        ev.accept()
+
+    def wheelEvent(self, ev):
+        ev.accept()
 
 
-# POSE_EYE_CAM1 = _neon_to_gl_pose(np.linalg.inv(np.array(
-#     [
-#         [-0.83205668, 0.15655432, 0.53196133, -17.51665135],
-#         [0.06130652, 0.97938445, -0.19230749, 19.34052655],
-#         [-0.55113206, -0.1274955, -0.82454234, -7.94343579],
-#         [0.0, 0.0, 0.0, 1.0],
-#     ]
-# )))
-POSE_EYE_CAM1 = np.array(
-    [
-        [-0.83222177, -0.15656665, -0.53205583,  0.],
-        [ 0.06127473, -0.97943461,  0.19240246,  0.],
-        [-0.55120686,  0.12742246,  0.82465922,  0.],
-        [ 9.01417674, 12.69747667, 22.14929918,  1.]
-    ]
-).T
+def configure_eye_camera_view(
+    *,
+    name="camera",
+    background_color=colors.BLACK,
+    distance=70,
+    elevation=-70,
+    azimuth=75,
+    pan=(-15, 15, 0),
+):
+    """Create and return a standard configured realtime eye-model GL view."""
+    view = YUpGLViewWidget(name=name)
+    view.setBackgroundColor(background_color)
+    view.setCameraPosition(distance=distance, elevation=elevation, azimuth=azimuth)
+    view.pan(dx=pan[0], dy=pan[1], dz=pan[2])
+    return view
+
 
 def apply_pose_to_texture(
     texture_item,
@@ -61,31 +77,54 @@ def apply_pose_to_texture(
     translated corner so the image center matches the pose center.
     """
     if camera == 0:
-        pose = POSE_EYE_CAM0
+        pos = POS_EYE_CAM0
     elif camera == 1:
-        pose = POSE_EYE_CAM1
+        pos = POS_EYE_CAM1
+    else:
+        raise ValueError(f"Unsupported camera index: {camera}")
 
     texture_item.scale(texture_scale, texture_scale, 1)
 
-    # The extra rotations about y and z account for differences between Neon's coordinate system and GLImageItem's coordinate system
-    pose_rot = (
-        R.from_euler("y", 90, degrees=True)
-        * R.from_euler("z", 90, degrees=True)
-        * R.from_matrix(pose[:3, :3])
+    rotation_sign = -1.0 if camera == 0 else 1.0
+
+    texture_item.rotate(15, 1, 0, 0)
+    if camera == 0:
+        texture_item.translate(-texture_scale * size, 0.0, 0.0)
+    texture_item.rotate(rotation_sign * 10, 0, 1, 0)
+    if camera == 0:
+        texture_item.translate(texture_scale * size, 0.0, 0.0)
+    texture_item.rotate(1, 0, 0, 1)
+
+    texture_item.rotate(np.rad2deg(2.5656), -0.05957617, -rotation_sign * 0.99438494, rotation_sign * 0.08746015)
+
+    texture_item.translate(
+        pos[0],
+        pos[1],
+        pos[2],
     )
 
-    rotvec = pose_rot.as_rotvec()
-    angle_rad = np.linalg.norm(rotvec)
-    if angle_rad > 1e-12:
-        axis = rotvec / angle_rad
-    texture_item.rotate(np.rad2deg(angle_rad), axis[0], axis[1], axis[2])
 
-    half_local = np.array([0.5 * size * texture_scale, 0.5 * size * texture_scale, 0.0])
+def make_eye_texture_image(eye_image, size, alpha_scale=0.75):
+    """Convert an eye sub-image to RGBA texture data for GLImageItem.setData."""
+    eye_image_resized = cv2.resize(eye_image, (size, size), interpolation=cv2.INTER_AREA)
+    eye_image_oriented = np.rot90(np.rot90(np.fliplr(np.rot90(eye_image_resized))))
+    eye_rgba, _ = fn.makeARGB(eye_image_oriented, useRGBA=True)
+    eye_rgba[..., 3] = (eye_rgba[..., 3] * alpha_scale).astype(np.uint8)
+    return eye_rgba
 
-    t = pose[:3, 3].copy()
 
-    corner_world = t - pose_rot.apply(half_local)
-    texture_item.translate(corner_world[0], corner_world[1], corner_world[2])
+def make_eye_texture_pair(eye_frame, size, alpha_scale=0.75):
+    """Split Neon eyes frame into left/right textures and convert both to RGBA."""
+    eye_image_left = eye_frame[:, 192:, :]
+    eye_image_right = eye_frame[:, :192, :]
+
+    eye_texture_left = make_eye_texture_image(
+        eye_image_left, size=size, alpha_scale=alpha_scale
+    )
+    eye_texture_right = make_eye_texture_image(
+        eye_image_right, size=size, alpha_scale=alpha_scale
+    )
+    return eye_texture_left, eye_texture_right
 
 
 class OpticalAxis:
@@ -269,7 +308,7 @@ class EyeLid:
 
     def update(self, new_eyeball_center, new_eyelid_angle):
         self.eyeball_center = new_eyeball_center
-        self.eyelid_angle = new_eyelid_angle
+        self.eyelid_angle = new_eyelid_angle + np.pi/2
 
         self.position = self.eyeball_center
 
@@ -381,12 +420,13 @@ class Eyeball:
         axis_x, axis_y, axis_z = self.optical_axis_vector
         optical_axis_norm = np.linalg.norm(self.optical_axis_vector)
 
-        azimuth = np.arctan2(axis_y, axis_x)  # Rotation about Z axis
-        elevation = np.arcsin(axis_z / optical_axis_norm)  # Rotation about Y axis
+        azimuth = np.arctan2(axis_x, axis_z)  # Rotation about Z axis
+        elevation = np.arcsin(axis_y / optical_axis_norm)  # Rotation about Y axis
 
-        azimuth -= np.pi / 2  # 0 azimuth is forward for Neon
+        # azimuth -= np.pi / 2  # 0 azimuth is forward for Neon
 
-        self.eyeball_rotation = (azimuth, elevation)
+        # Neon has opposite rotation directions for familiarity when analyizing data
+        self.eyeball_rotation = (-azimuth, -elevation+np.pi/2)
 
     def _create_mesh(self):
         self._create_black_body()
@@ -554,8 +594,8 @@ class ThreeDEyeModel:
         self.eyeball_center = np.array(
             [
                 new_eyeball_center[0],
-                new_eyeball_center[2],
                 new_eyeball_center[1],
+                new_eyeball_center[2],
             ]
         )
 
@@ -563,8 +603,8 @@ class ThreeDEyeModel:
         self.optical_axis_vector = np.array(
             [
                 new_optical_axis_vector[0],
+                new_optical_axis_vector[1],
                 new_optical_axis_vector[2],
-                -1 * new_optical_axis_vector[1],
             ]
         )
 

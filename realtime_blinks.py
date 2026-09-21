@@ -14,7 +14,7 @@
 import sys
 import threading
 import time
-from queue import Empty, Queue
+from queue import Empty, Full, Queue
 
 import cv2
 import numpy as np
@@ -38,7 +38,12 @@ from PySide6.QtWidgets import (
 )
 
 import colors
-from threeD_eye_model import ThreeDEyeModel, apply_pose_to_texture
+from threeD_eye_model import (
+    ThreeDEyeModel,
+    apply_pose_to_texture,
+    configure_eye_camera_view,
+    make_eye_texture_pair,
+)
 
 BLINK_PULSE_DURATION_S: float = 0.05
 
@@ -52,101 +57,79 @@ ANIMATION_FRAME_RATE: int = 30  # FPS
 # acquisition from the main thread, allowing for smoother
 # visualization updates.
 
+FRAME_QUEUE_MAXSIZE = 2
+BLINK_QUEUE_MAXSIZE = 256
+ENABLE_VIDEO_RECORDING = True
+
 data_queue = Queue(maxsize=1)
-scene_queue = Queue()
-render_queue = Queue()
-blink_queue = Queue()
+render_queue = Queue(maxsize=FRAME_QUEUE_MAXSIZE)
+blink_queue = Queue(maxsize=BLINK_QUEUE_MAXSIZE)
+
+
+def put_latest(queue, item):
+    try:
+        queue.put_nowait(item)
+    except Full:
+        try:
+            queue.get_nowait()
+        except Empty:
+            pass
+        queue.put_nowait(item)
 
 
 def data_acquisition_loop():
     while True:
         # See our Python API Documentation for more info about these two functions:
         # https://pupil-labs.github.io/pl-realtime-api/dev/
-        scene_image = device.receive_scene_video_frame(timeout_seconds=0.033)
         eye_image = device.receive_eyes_video_frame(timeout_seconds=0.012)
         gaze = device.receive_gaze_datum(timeout_seconds=0.012)
         eye_event = device.receive_eye_events(timeout_seconds=0.006)
 
         if isinstance(eye_event, BlinkEventData):
-            blink_queue.put({"eye_event": eye_event})
+            put_latest(blink_queue, {"eye_event": eye_event})
 
         # Let's only pass data to the visualization when all relevant streams have
         # provided a datum. This makes the visualization logic simpler.
-        if not all((scene_image, eye_image, gaze)):
-            # if not all((eye_image, gaze)):
+        if not all((eye_image, gaze)):
             continue
 
-        # Clear out the queue if it's already full.
-        if data_queue.full():
-            data_queue.get()
-
-        data_queue.put(
+        put_latest(
+            data_queue,
             {
                 "eye": eye_image.bgr_pixels,
                 "gaze": gaze,
-                # "scene": scene_image.bgr_pixels,
-            }
+            },
         )
-
-        scene_queue.put({"scene": scene_image.bgr_pixels, "gaze": gaze})
 
 
 def video_writing_loop():
-    while True:
-        scene_data = scene_queue.get()
-        render_data = render_queue.get()
-
-        if scene_data is not None:
-            if scene_data == "stop" or render_data == "stop":
+    try:
+        while True:
+            render_data = render_queue.get()
+            if render_data == "stop":
                 break
-            else:
-                scene_img = scene_data["scene"]
-                gaze = scene_data["gaze"]
-                render_img = render_data["img"]
-        else:
-            continue
 
-        if not hasattr(video_writing_loop, "writer"):
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            video_writing_loop.writer = cv2.VideoWriter(
-                "rt_blinks_scene.mp4", fourcc, 29, (1600, 1200)
-            )
+            if not render_data:
+                continue
 
-        if not hasattr(video_writing_loop, "render_writer"):
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            video_writing_loop.render_writer = cv2.VideoWriter(
-                "rt_blinks_eye.mp4", fourcc, 29, (1200, 1200)
-            )
+            render_img = render_data["img"]
 
-        cv2.circle(
-            scene_img,
-            (int(gaze.x), int(gaze.y)),
-            radius=80,
-            color=(0, 0, 255),
-            thickness=15,
-        )
+            if not hasattr(video_writing_loop, "render_writer"):
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                video_writing_loop.render_writer = cv2.VideoWriter(
+                    "rt_blinks_eye.mp4", fourcc, 29, (1200, 1200)
+                )
 
-        video_writing_loop.writer.write(scene_img)
-
-        video_writing_loop.render_writer.write(render_img)
-
-    video_writing_loop.writer.release()
-    video_writing_loop.render_writer.release()
-
-
-# Now, we make class to hold all the elements of the matplotlib figure.
-# This makes it easier to organize the visualization logic later.
-# The figure will have three sections:
-# - A space at the top to display the current eye image.
-# - A space in the middle to display the animated 3D eye model.
-# - A space at the bottom for plots that will show the optical axis vectors, for quick inspection
-#   of things, like vergence angle.
+            video_writing_loop.render_writer.write(render_img)
+    finally:
+        if hasattr(video_writing_loop, "render_writer") and video_writing_loop.render_writer is not None:
+            video_writing_loop.render_writer.release()
 
 
 class Visualization(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("3D Eye Model Visualization")
+        self.setWindowTitle("Blinks Visualization")
         self.setGeometry(100, 100, 600, 600)
         self.setStyleSheet("background-color: rgb(0, 0, 0);")
 
@@ -157,16 +140,7 @@ class Visualization(QMainWindow):
         self.setCentralWidget(central)
 
         # --- 3D OpenGL view (left) ---
-        self.view = gl.GLViewWidget()
-        # self.view.setBackgroundColor(colors.BACKGROUND)
-        self.view.setBackgroundColor(colors.BLACK)
-        self.view.setCameraPosition(
-            distance=100,
-            elevation=-5,  # angle above XY plane
-            azimuth=10,  # rotation around Z axis
-        )
-        self.view.pan(dx=0, dy=-12, dz=-17)
-        # self.view.setAntialiasing(aa=True)
+        self.view = configure_eye_camera_view()
         layout.addWidget(self.view, stretch=2)
 
         my_font = QFont("Arial", 12)
@@ -175,7 +149,6 @@ class Visualization(QMainWindow):
         self.plot_widget = LivePlotWidget(
             title="Eyelid Aperture [mm]",
             y_range_controller=LiveAxisRange(fixed_range=[0, 20]),
-            # labels={"left": ("Degrees")},
         )
 
         self.plot_widget.hideButtons()
@@ -190,7 +163,6 @@ class Visualization(QMainWindow):
         self.plot_widget.getAxis("left").setTicks([])
 
         self.plot_widget.getAxis("left").label.setFont(my_font)
-        # self.plot_widget.titleLabel.item.setFont(my_font)
 
         self.plot_widget.setAntialiasing(True)
 
@@ -215,7 +187,6 @@ class Visualization(QMainWindow):
         self.plot_widget_blinks = LivePlotWidget(
             title="Blinks",
             y_range_controller=LiveAxisRange(fixed_range=[0, 1]),
-            # labels={"left": ("Degrees")},
         )
 
         self.plot_widget_blinks.hideButtons()
@@ -230,7 +201,6 @@ class Visualization(QMainWindow):
         self.plot_widget_blinks.getAxis("left").setTicks([])
 
         self.plot_widget_blinks.getAxis("left").label.setFont(my_font)
-        # self.plot_widget_blinks.titleLabel.item.setFont(my_font)
 
         self.plot_widget_blinks.setAntialiasing(True)
 
@@ -245,6 +215,7 @@ class Visualization(QMainWindow):
         )
 
         layout.addWidget(self.plot_widget_blinks, stretch=1)
+        self.blink_end_time_ns = 0
 
         # Timer for updating plot
         self.timer = QTimer()
@@ -260,14 +231,14 @@ class Visualization(QMainWindow):
         self.eye_right = ThreeDEyeModel(np.array([30, 0, 0]), color=colors.GREEN)
         self.eye_right.add_to_view(self.view)
 
-        size = 64
+        size = 84
         dummy_texture_data = np.empty((size, size, 4), dtype=np.ubyte)
 
         checkerboard = np.indices((size, size)).sum(axis=0) % 2
         dummy_texture_data[checkerboard == 0] = (0, 0, 0, 255)
         dummy_texture_data[checkerboard == 1] = (255, 255, 255, 255)
 
-        texture_scale = 0.25
+        texture_scale = 0.16
 
         self.eye_texture_left = gl.GLImageItem(dummy_texture_data, smooth=True)
         apply_pose_to_texture(self.eye_texture_left, 0, size, texture_scale)
@@ -291,78 +262,34 @@ class Visualization(QMainWindow):
 
         # Drop alpha and convert to BGR for OpenCV
         frame = cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
-        render_queue.put({"img": frame})
-
-        # self.view.setBackgroundColor(colors.BACKGROUND)
+        if ENABLE_VIDEO_RECORDING:
+            put_latest(render_queue, {"img": frame})
 
         eye_img = None
         gaze = None
-        # scene_img = None
         try:
             data = data_queue.get()
             eye_img = data["eye"]
             gaze = data["gaze"]
-            # scene_img = data["scene"]
         except Empty:
             pass
 
         eye_event = None
-        try:
-            data = blink_queue.get_nowait()
-            eye_event = data["eye_event"]
-        except Empty:
-            pass
-
-        # If there is a scene image and gaze data available, then draw a circle
-        # at the gaze point and display the resulting image via OpenCV's imshow function.
-        # if scene_img is not None and gaze is not None:
-        # if gaze is not None:
-        # key = cv2.waitKey(1) & 0xFF
-        # if key == 27:
-        # cv2.destroyAllWindows()
-
-        # cv2.circle(
-        #     scene_img,
-        #     (int(gaze.x), int(gaze.y)),
-        #     radius=80,
-        #     color=(0, 0, 255),
-        #     thickness=15,
-        # )
-
-        # cv2.imshow("Scene Camera + Gaze Overlay - Press ESC to quit", scene_img)
+        while True:
+            try:
+                data = blink_queue.get_nowait()
+                eye_event = data["eye_event"]
+            except Empty:
+                break
 
         if eye_img is not None:
-            eye_image_left = eye_img[:, 192:, :]
-            eye_image_right = eye_img[:, :192, :]
-
-            eye_image_left_resized = cv2.resize(
-                eye_image_left, (64, 64), interpolation=cv2.INTER_AREA
+            eye_texture_left, eye_texture_right = make_eye_texture_pair(
+                eye_img,
+                size=84,
+                alpha_scale=0.75,
             )
-            eye_image_left_fin = np.flipud(
-                np.flipud(np.fliplr(np.rot90(eye_image_left_resized)))
-            )
-            eye_image_left_fin = pg.functions.makeARGB(eye_image_left_fin, useRGBA=True)
-            # Reduce alpha channel (make more transparent)
-            eye_image_left_fin[0][..., 3] = (
-                eye_image_left_fin[0][..., 3] * 0.5
-            ).astype(np.uint8)
-
-            eye_image_right_resized = cv2.resize(
-                eye_image_right, (64, 64), interpolation=cv2.INTER_AREA
-            )
-            eye_image_right_fin = np.flipud(
-                np.flipud(np.fliplr(np.rot90(eye_image_right_resized)))
-            )
-            eye_image_right_fin = pg.functions.makeARGB(
-                eye_image_right_fin, useRGBA=True
-            )
-            # Reduce alpha channel (make more transparent)
-            eye_image_right_fin[0][..., 3] = (
-                eye_image_right_fin[0][..., 3] * 0.5
-            ).astype(np.uint8)
-
-            self.eye_texture_left.setData(eye_image_left_fin[0])
-            self.eye_texture_right.setData(eye_image_right_fin[0])
+            self.eye_texture_left.setData(eye_texture_left)
+            self.eye_texture_right.setData(eye_texture_right)
 
         # If there is gaze data available, then update the
         # ThreeDEyeModels and the optical axis plots.
@@ -417,9 +344,9 @@ class Visualization(QMainWindow):
             self.data_connector_right.cb_append_data_point(gaze.eyelid_aperture_right)
 
         if isinstance(eye_event, BlinkEventData):
-            viz.blink_end_time_ns = time.time_ns() + (BLINK_PULSE_DURATION_S * 1e9)
+            self.blink_end_time_ns = time.time_ns() + (BLINK_PULSE_DURATION_S * 1e9)
 
-        blink_value = 0.8 if time.time_ns() < viz.blink_end_time_ns else 0.0
+        blink_value = 0.8 if time.time_ns() < self.blink_end_time_ns else 0.0
         self.data_connector_blinks.cb_append_data_point(blink_value)
 
 
@@ -439,9 +366,11 @@ if __name__ == "__main__":
     )
     data_acquisition_thread.start()
 
-    # Start up the video writing thread.
-    video_writing_thread = threading.Thread(target=video_writing_loop, daemon=True)
-    video_writing_thread.start()
+    # Start up the video writing thread only when recording is enabled.
+    video_writing_thread = None
+    if ENABLE_VIDEO_RECORDING:
+        video_writing_thread = threading.Thread(target=video_writing_loop, daemon=True)
+        video_writing_thread.start()
 
     app = QApplication(sys.argv)
     pg.setConfigOptions(antialias=True)
@@ -458,8 +387,9 @@ if __name__ == "__main__":
         # No matter what happens, we need to cleanly close our connection to Neon
         # and close all OpenCV windows.
         print("Cleaning up resources...")
-        scene_queue.put("stop")
-        render_queue.put("stop")
+        if ENABLE_VIDEO_RECORDING and video_writing_thread is not None:
+            put_latest(render_queue, "stop")
+            video_writing_thread.join(timeout=5.0)
         device.close()
         cv2.destroyAllWindows()
         print("Done.")
