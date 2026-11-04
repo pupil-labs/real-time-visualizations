@@ -11,6 +11,7 @@
 # ]
 # ///
 
+import argparse
 import sys
 import threading
 from pathlib import Path
@@ -305,9 +306,15 @@ def video_writing_loop():
 
             video_writing_loop.render_writer.write(render_img)
     finally:
-        if hasattr(video_writing_loop, "writer") and video_writing_loop.writer is not None:
+        if (
+            hasattr(video_writing_loop, "writer")
+            and video_writing_loop.writer is not None
+        ):
             video_writing_loop.writer.release()
-        if hasattr(video_writing_loop, "render_writer") and video_writing_loop.render_writer is not None:
+        if (
+            hasattr(video_writing_loop, "render_writer")
+            and video_writing_loop.render_writer is not None
+        ):
             video_writing_loop.render_writer.release()
 
 
@@ -513,15 +520,21 @@ class Visualization(QMainWindow):
         self.eye_right.add_to_view(self.threeD_eye_view)
 
         self.texture_size = 84
-        dummy_texture_data = np.empty((self.texture_size, self.texture_size, 4), dtype=np.ubyte)
+        dummy_texture_data = np.empty(
+            (self.texture_size, self.texture_size, 4), dtype=np.ubyte
+        )
         self.texture_scale = 0.16
 
         self.eye_texture_left = gl.GLImageItem(dummy_texture_data, smooth=True)
-        apply_pose_to_texture(self.eye_texture_left, 0, self.texture_size, self.texture_scale)
+        apply_pose_to_texture(
+            self.eye_texture_left, 0, self.texture_size, self.texture_scale
+        )
         self.threeD_eye_view.addItem(self.eye_texture_left)
 
         self.eye_texture_right = gl.GLImageItem(dummy_texture_data, smooth=True)
-        apply_pose_to_texture(self.eye_texture_right, 1, self.texture_size, self.texture_scale)
+        apply_pose_to_texture(
+            self.eye_texture_right, 1, self.texture_size, self.texture_scale
+        )
         self.threeD_eye_view.addItem(self.eye_texture_right)
 
         vertices, faces = load_obj("imu.obj")
@@ -666,10 +679,18 @@ class Visualization(QMainWindow):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-ip",
+        "--ip_address",
+        help="A fallback IP address if your device is not found automatically.",
+    )
+    args = vars(parser.parse_args())
+
     # First, establish a connection to Neon.
     device = discover_one_device(max_search_duration_seconds=10)
     if device is None:
-        device = Device(address=FALLBACK_DEVICE_ADDRESS, port=FALLBACK_DEVICE_PORT)
+        device = Device(address=args["ip_address"], port=FALLBACK_DEVICE_PORT)
     if device is None:
         raise RuntimeError("No device found.")
     print(f"Connecting to device at {device.address}:{device.port}...")

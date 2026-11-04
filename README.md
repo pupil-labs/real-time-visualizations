@@ -8,7 +8,7 @@ The components in this respository are:
 
 - Full visualization of a 3D eye model, including a way to qualitatively assess vergence in real-time:
 
-  - `realtime_eye_state.py`
+  - `realtime_eyestate.py`
   - `threeD_eye_model.py`
 
 - A 3D representation of Neon's orientation in world-based coordinates:
@@ -23,13 +23,21 @@ The components in this respository are:
 To try them, first make sure that your Neon and computer are connected to the same local network. Then, you can simply start an example with the `uv` command-line tool. For example:
 
 ```shell
-uv run -s realtime_eye_state.py
+uv run -s realtime_eyestate.py
 ```
 
 If you prefer a conventional Python approach, then make a new virtual environment & activate it, install the dependencies (`pip install -r requirements.txt`), and run the examples:
 
 ```shell
-python realtime_eye_state.py
+python realtime_eyestate.py
 ```
 
-If you are unable to stream the data, then try entering the IP address of the Companion Device in the `FALLBACK_DEVICE_ADDRESS` variable at the top of the respective Python file. Otherwise, check [our Troubleshooting guide](https://pupil-labs.github.io/pl-realtime-api/dev/troubleshooting/) and make sure to reach out to [us on Discord](https://pupil-labs.com/chat).
+You can also install the dependencies via `uv sync`, if you prefer to make use of the included `pyproject.toml` file.
+
+If you are unable to stream the data, then try passing the IP address of the Companion Device as a command line argument:
+
+```shell
+uv run -s realtime_eyestate.py -ip IP_ADDRESS_FROM_APP
+```
+
+Otherwise, check [our Troubleshooting guide](https://pupil-labs.github.io/pl-realtime-api/dev/troubleshooting/) and make sure to reach out to [us on Discord](https://pupil-labs.com/chat).
