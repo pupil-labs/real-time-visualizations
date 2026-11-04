@@ -1,0 +1,26 @@
+[project]
+name = "realtime-viz-alpha-lab"
+version = "0.1.0"
+description = "This repository accompanies our Real-time Visualization Alpha Lab guide. It demonstrates Neon's Real-time API with different visualizations, separated into individual examples."
+readme = "README.md"
+authors = [
+    { name = "Robert Ennis", email = "rob@pupil-labs.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.5.4",
+    "opencv-python>=5.0.0.93",
+    "pglive>=0.9.1",
+    "pupil-labs-realtime-api>=1.9.0",
+    "pyopengl>=3.1.10",
+    "pyqtgraph>=0.13.7",
+    "pyside6>=6.12.0",
+    "scipy>=1.18.1",
+]
+
+[project.scripts]
+realtime-viz-alpha-lab = "realtime_viz_alpha_lab:main"
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
